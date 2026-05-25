@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>K13 Loyalty — Classement</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Sora:wght@700;800&display=swap">
+  <link rel="stylesheet" href="/css/app.css"/>
+  <style>
+    body{background:var(--bg);min-height:100vh}
+    .lb-wrap{max-width:700px;margin:0 auto;padding:32px 20px}
+    .lb-header{display:flex;align-items:center;gap:16px;margin-bottom:28px}
+    .lb-title{font-family:'Sora',sans-serif;font-size:26px;font-weight:800}
+    .lb-sub{font-size:13px;color:var(--t2);margin-top:2px}
+    .lb-row{background:var(--white);border:1px solid var(--border);border-radius:var(--r-lg);padding:13px 16px;display:flex;align-items:center;gap:14px;margin-bottom:8px;box-shadow:var(--sh);transition:box-shadow .15s}
+    .lb-row:hover{box-shadow:var(--sh-md)}
+    .lb-rank{font-family:'Sora',sans-serif;font-size:18px;font-weight:800;width:32px;text-align:center;color:var(--t3)}
+    .lb-rank.gold{color:#F59E0B}
+    .lb-rank.silver{color:#94A3B8}
+    .lb-rank.bronze{color:#CD7C32}
+    .lb-avatar{width:40px;height:40px;border-radius:50%;background:var(--blue-l);display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:700;color:var(--blue);overflow:hidden;position:relative;flex-shrink:0}
+    .lb-avatar img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+    .lb-info{flex:1}
+    .lb-name{font-size:14px;font-weight:600}
+    .lb-meta{font-size:12px;color:var(--t2);margin-top:1px}
+    .lb-pts{font-family:'Sora',sans-serif;font-size:18px;font-weight:800;color:var(--blue)}
+    .lb-pts-lbl{font-size:11px;color:var(--t3)}
+    .lb-badge{font-size:11px;font-weight:600;padding:2px 8px;border-radius:12px;margin-left:6px}
+    .lb-badge.gold{background:#FEF3C7;color:#92400E}
+    .lb-badge.silver{background:#F3F4F6;color:#374151}
+    .lb-badge.bronze{background:#FEF9F0;color:#92400E}
+    .back-btn{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--t2);text-decoration:none;margin-bottom:20px;padding:7px 14px;border:1px solid var(--border2);border-radius:8px;background:var(--white);transition:all .15s}
+    .back-btn:hover{border-color:var(--blue);color:var(--blue)}
+    .dark-toggle{margin-left:auto;background:transparent;border:1px solid var(--border2);border-radius:8px;font-size:16px;padding:4px 9px;cursor:pointer}
+    .empty{text-align:center;color:var(--t2);padding:40px;font-size:14px}
+  </style>
+</head>
+<body>
+<div class="lb-wrap">
+  <div style="display:flex;align-items:center;margin-bottom:16px">
+    <a href="/" class="back-btn">← Retour</a>
+    <button class="dark-toggle" onclick="toggleDark()">🌙</button>
+  </div>
+  <div class="lb-header">
+    <img src="/img/k13-logo.png" alt="K13" style="height:48px;width:48px;object-fit:contain"/>
+    <div>
+      <div class="lb-title">🏆 Classement K13</div>
+      <div class="lb-sub">Top 50 membres par points de fidélité</div>
+    </div>
+  </div>
+  <div id="lb-list"><div class="empty">Chargement…</div></div>
+</div>
+<script>
+function toggleDark(){document.documentElement.classList.toggle('dark');localStorage.setItem('k13-dark',document.documentElement.classList.contains('dark')?'1':'0');}
+if(localStorage.getItem('k13-dark')==='1') document.documentElement.classList.add('dark');
+
+const rankEmoji=['🥇','🥈','🥉'];
+const rankColors=['gold','silver','bronze'];
+
+async function load(){
+  const res = await fetch('/api/user/leaderboard');
+  const data = await res.json();
+  if(!data.ok||!data.leaderboard.length){
+    document.getElementById('lb-list').innerHTML='<div class="empty">Aucun membre encore.</div>';
+    return;
+  }
+  document.getElementById('lb-list').innerHTML = data.leaderboard.map((u,i) => {
+    const rank = i < 3 ? rankColors[i] : '';
+    const rankDisplay = i < 3 ? rankEmoji[i] : `#${i+1}`;
+    const avatar = u.discord_id && u.discord_avatar
+      ? `<img src="https://cdn.discordapp.com/avatars/${u.discord_id}/${u.discord_avatar}.png?size=64" alt=""/>`
+      : `<span>${(u.discord_username||u.username||'?').charAt(0).toUpperCase()}</span>`;
+    const badgeLabel = {bronze:'Bronze',silver:'Silver',gold:'Gold'}[u.rank]||'';
+    return `<div class="lb-row">
+      <div class="lb-rank ${rank}">${rankDisplay}</div>
+      <div class="lb-avatar">${avatar}</div>
+      <div class="lb-info">
+        <div class="lb-name">@${u.discord_username||u.username}<span class="lb-badge ${u.rank}">${badgeLabel}</span></div>
+        <div class="lb-meta">${u.challenges_done} défi${u.challenges_done>1?'s':''} complété${u.challenges_done>1?'s':''}</div>
+      </div>
+      <div style="text-align:right">
+        <div class="lb-pts">${(u.points||0).toLocaleString('fr-FR')}</div>
+        <div class="lb-pts-lbl">points</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+load();
+</script>
+</body>
+</html>
