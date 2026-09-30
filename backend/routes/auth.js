@@ -10,6 +10,10 @@ const router = express.Router();
 
 // ── Discord OAuth (auth principale) ───────────────────────────────────────────
 router.get('/discord', (req, res) => {
+  if (!process.env.DISCORD_CLIENT_ID || !process.env.DISCORD_REDIRECT_URI) {
+    console.error('[Discord] DISCORD_CLIENT_ID / DISCORD_REDIRECT_URI manquants : variables d\'environnement non chargées');
+    return res.redirect('/?error=discord_not_configured');
+  }
   const state = crypto.randomBytes(16).toString('hex');
   req.session.oauthState = state;
   req.session.save(err => {

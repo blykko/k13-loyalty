@@ -28,6 +28,7 @@ const ERRORS = {
   twitch_link_failed: 'Erreur lors de la liaison Twitch.',
   twitch_state_mismatch: 'Session expirée pendant la liaison Twitch, réessaie.',
   twitch_already_linked: 'Ce compte Twitch est déjà lié à un autre membre.',
+  discord_not_configured: 'Connexion Discord indisponible : configuration serveur manquante. Préviens un admin.',
   discord_auth_failed: 'Connexion Discord annulée.',
   discord_login_failed: 'Erreur de connexion Discord, réessaie.',
   discord_state_mismatch: 'Session expirée pendant la connexion, réessaie.',

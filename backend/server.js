@@ -66,6 +66,9 @@ app.use(session({
   },
 }));
 
+// Variables indispensables : sans elles la connexion Discord échoue ("Invalid Form Body")
+const missingEnv = ['DISCORD_CLIENT_ID', 'DISCORD_CLIENT_SECRET', 'DISCORD_REDIRECT_URI', 'SESSION_SECRET'].filter(k => !process.env[k]);
+if (missingEnv.length) console.warn(`⚠️  Variables d'environnement manquantes : ${missingEnv.join(', ')} (fichier .env non chargé ?)`);
 if (isProduction && !process.env.SESSION_SECRET) console.warn('⚠️  SESSION_SECRET non défini : sessions non sécurisées !');
 
 const PORT = process.env.PORT || 3000;
