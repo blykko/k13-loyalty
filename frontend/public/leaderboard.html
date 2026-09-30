@@ -3,89 +3,95 @@
 <head>
   <meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/>
   <title>K13 Loyalty — Classement</title>
+  <link rel="icon" href="/img/k13-logo.png"/>
   <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Sora:wght@700;800&display=swap">
   <link rel="stylesheet" href="/css/app.css"/>
+  <script>try{var d=localStorage.getItem('k13-dark');if(d==='1'||(d===null&&matchMedia('(prefers-color-scheme: dark)').matches))document.documentElement.classList.add('dark')}catch(e){}</script>
   <style>
-    body{background:var(--bg);min-height:100vh}
-    .lb-wrap{max-width:700px;margin:0 auto;padding:32px 20px}
-    .lb-header{display:flex;align-items:center;gap:16px;margin-bottom:28px}
-    .lb-title{font-family:'Sora',sans-serif;font-size:26px;font-weight:800}
-    .lb-sub{font-size:13px;color:var(--t2);margin-top:2px}
-    .lb-row{background:var(--white);border:1px solid var(--border);border-radius:var(--r-lg);padding:13px 16px;display:flex;align-items:center;gap:14px;margin-bottom:8px;box-shadow:var(--sh);transition:box-shadow .15s}
-    .lb-row:hover{box-shadow:var(--sh-md)}
-    .lb-rank{font-family:'Sora',sans-serif;font-size:18px;font-weight:800;width:32px;text-align:center;color:var(--t3)}
-    .lb-rank.gold{color:#F59E0B}
-    .lb-rank.silver{color:#94A3B8}
-    .lb-rank.bronze{color:#CD7C32}
+    .lb-wrap{max-width:720px;margin:0 auto;padding:24px 16px 40px}
+    .lb-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
+    .lb-header{display:flex;align-items:center;gap:14px;margin-bottom:22px}
+    .lb-title{font-family:'Sora',sans-serif;font-size:24px;font-weight:800;line-height:1.2}
+    .lb-sub{font-size:13px;color:var(--t2)}
+    .podium{display:grid;grid-template-columns:1fr 1.15fr 1fr;gap:10px;align-items:end;margin-bottom:18px}
+    .pod{background:var(--white);border:1px solid var(--border);border-radius:var(--r-lg);padding:16px 10px;text-align:center;box-shadow:var(--sh)}
+    .pod.p1{padding-top:22px;border-color:#FCD34D}
+    .pod .medal{font-size:26px}
+    .pod .lb-avatar{margin:6px auto}
+    .pod .lb-name{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .lb-row{background:var(--white);border:1px solid var(--border);border-radius:var(--r-lg);padding:11px 14px;display:flex;align-items:center;gap:12px;margin-bottom:8px;box-shadow:var(--sh)}
+    .lb-row.me,.pod.me{border-color:var(--blue);box-shadow:0 0 0 2px var(--blue-l)}
+    .lb-rank{font-family:'Sora',sans-serif;font-size:15px;font-weight:800;width:34px;text-align:center;color:var(--t3)}
     .lb-avatar{width:40px;height:40px;border-radius:50%;background:var(--blue-l);display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:700;color:var(--blue);overflow:hidden;position:relative;flex-shrink:0}
     .lb-avatar img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
-    .lb-info{flex:1}
-    .lb-name{font-size:14px;font-weight:600}
-    .lb-meta{font-size:12px;color:var(--t2);margin-top:1px}
-    .lb-pts{font-family:'Sora',sans-serif;font-size:18px;font-weight:800;color:var(--blue)}
-    .lb-pts-lbl{font-size:11px;color:var(--t3)}
-    .lb-badge{font-size:11px;font-weight:600;padding:2px 8px;border-radius:12px;margin-left:6px}
-    .lb-badge.gold{background:#FEF3C7;color:#92400E}
-    .lb-badge.silver{background:#F3F4F6;color:#374151}
-    .lb-badge.bronze{background:#FEF9F0;color:#92400E}
-    .back-btn{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--t2);text-decoration:none;margin-bottom:20px;padding:7px 14px;border:1px solid var(--border2);border-radius:8px;background:var(--white);transition:all .15s}
-    .back-btn:hover{border-color:var(--blue);color:var(--blue)}
-    .dark-toggle{margin-left:auto;background:transparent;border:1px solid var(--border2);border-radius:8px;font-size:16px;padding:4px 9px;cursor:pointer}
+    .lb-info{flex:1;min-width:0}
+    .lb-name{font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .lb-meta{font-size:12px;color:var(--t2)}
+    .lb-pts{font-family:'Sora',sans-serif;font-size:17px;font-weight:800;color:var(--blue);text-align:right}
+    .lb-pts-lbl{font-size:11px;color:var(--t3);text-align:right}
     .empty{text-align:center;color:var(--t2);padding:40px;font-size:14px}
   </style>
 </head>
 <body>
 <div class="lb-wrap">
-  <div style="display:flex;align-items:center;margin-bottom:16px">
-    <a href="/" class="back-btn">← Retour</a>
-    <button class="dark-toggle" onclick="toggleDark()">🌙</button>
+  <div class="lb-top">
+    <a href="/" class="btn-ghost sm">← Retour</a>
+    <button class="icon-btn" id="btn-dark" aria-label="Mode sombre">🌙</button>
   </div>
   <div class="lb-header">
-    <img src="/img/k13-logo.png" alt="K13" style="height:48px;width:48px;object-fit:contain"/>
+    <img src="/img/k13-logo.png" alt="K13" class="logo-img"/>
     <div>
-      <div class="lb-title">🏆 Classement K13</div>
-      <div class="lb-sub">Top 50 membres par points de fidélité</div>
+      <div class="lb-title">Classement K13</div>
+      <div class="lb-sub">Top 50 des membres par points gagnés</div>
     </div>
   </div>
+  <div id="podium" class="podium hidden"></div>
   <div id="lb-list"><div class="empty">Chargement…</div></div>
 </div>
 <script>
-function toggleDark(){document.documentElement.classList.toggle('dark');localStorage.setItem('k13-dark',document.documentElement.classList.contains('dark')?'1':'0');}
-if(localStorage.getItem('k13-dark')==='1') document.documentElement.classList.add('dark');
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const RANK = { bronze: '🥉 Bronze', silver: '🥈 Silver', gold: '🥇 Gold' };
+const btn = document.getElementById('btn-dark');
+const sync = () => btn.textContent = document.documentElement.classList.contains('dark') ? '☀️' : '🌙';
+btn.onclick = () => { const d = document.documentElement.classList.toggle('dark'); try { localStorage.setItem('k13-dark', d ? '1' : '0'); } catch {} sync(); };
+sync();
 
-const rankEmoji=['🥇','🥈','🥉'];
-const rankColors=['gold','silver','bronze'];
-
-async function load(){
-  const res = await fetch('/api/user/leaderboard');
-  const data = await res.json();
-  if(!data.ok||!data.leaderboard.length){
-    document.getElementById('lb-list').innerHTML='<div class="empty">Aucun membre encore.</div>';
-    return;
-  }
-  document.getElementById('lb-list').innerHTML = data.leaderboard.map((u,i) => {
-    const rank = i < 3 ? rankColors[i] : '';
-    const rankDisplay = i < 3 ? rankEmoji[i] : `#${i+1}`;
-    const avatar = u.discord_id && u.discord_avatar
-      ? `<img src="https://cdn.discordapp.com/avatars/${u.discord_id}/${u.discord_avatar}.png?size=64" alt=""/>`
-      : `<span>${(u.discord_username||u.username||'?').charAt(0).toUpperCase()}</span>`;
-    const badgeLabel = {bronze:'Bronze',silver:'Silver',gold:'Gold'}[u.rank]||'';
-    return `<div class="lb-row">
-      <div class="lb-rank ${rank}">${rankDisplay}</div>
-      <div class="lb-avatar">${avatar}</div>
-      <div class="lb-info">
-        <div class="lb-name">@${u.discord_username||u.username}<span class="lb-badge ${u.rank}">${badgeLabel}</span></div>
-        <div class="lb-meta">${u.challenges_done} défi${u.challenges_done>1?'s':''} complété${u.challenges_done>1?'s':''}</div>
-      </div>
-      <div style="text-align:right">
-        <div class="lb-pts">${(u.points||0).toLocaleString('fr-FR')}</div>
-        <div class="lb-pts-lbl">points</div>
-      </div>
-    </div>`;
-  }).join('');
+function avatar(u) {
+  const letter = esc((u.discord_username || u.username || '?').charAt(0).toUpperCase());
+  const img = u.discord_id && u.discord_avatar
+    ? `<img src="https://cdn.discordapp.com/avatars/${esc(u.discord_id)}/${esc(u.discord_avatar)}.png?size=64" alt="" onerror="this.remove()"/>` : '';
+  return `<div class="lb-avatar">${img}<span>${letter}</span></div>`;
 }
-load();
+const pts = n => Number(n || 0).toLocaleString('fr-FR');
+
+(async () => {
+  let data;
+  try { data = await (await fetch('/api/user/leaderboard', { credentials: 'same-origin' })).json(); } catch { data = null; }
+  const list = document.getElementById('lb-list');
+  if (!data?.ok) { list.innerHTML = '<div class="empty">Impossible de charger le classement.</div>'; return; }
+  if (!data.leaderboard.length) { list.innerHTML = '<div class="empty">Aucun membre classé pour l\'instant.</div>'; return; }
+  const lb = data.leaderboard, me = data.me;
+
+  if (lb.length >= 3) {
+    const pod = document.getElementById('podium');
+    pod.innerHTML = [1, 0, 2].map(i => { const u = lb[i]; return `<div class="pod p${i + 1} ${u.id === me ? 'me' : ''}">
+      <div class="medal">${['🥇','🥈','🥉'][i]}</div>${avatar(u)}
+      <div class="lb-name">${esc(u.discord_username || u.username)}</div>
+      <div class="lb-pts" style="text-align:center">${pts(u.points)}</div></div>`; }).join('');
+    pod.classList.remove('hidden');
+  }
+  list.innerHTML = lb.map((u, i) => (lb.length >= 3 && i < 3) ? '' : `<div class="lb-row ${u.id === me ? 'me' : ''}">
+    <div class="lb-rank">${i < 3 ? ['🥇','🥈','🥉'][i] : '#' + (i + 1)}</div>
+    ${avatar(u)}
+    <div class="lb-info">
+      <div class="lb-name">${esc(u.discord_username || u.username)}${u.id === me ? ' (toi)' : ''}</div>
+      <div class="lb-meta">${RANK[u.rank] || ''} · ${u.challenges_done} défi${u.challenges_done > 1 ? 's' : ''}</div>
+    </div>
+    <div><div class="lb-pts">${pts(u.points)}</div><div class="lb-pts-lbl">points</div></div>
+  </div>`).join('');
+})();
 </script>
 </body>
 </html>

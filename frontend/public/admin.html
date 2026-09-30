@@ -3,346 +3,238 @@
 <head>
   <meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/>
   <title>K13 Admin</title>
+  <meta name="robots" content="noindex"/>
+  <link rel="icon" href="/img/k13-logo.png"/>
   <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Sora:wght@700;800&display=swap">
   <link rel="stylesheet" href="/css/app.css"/>
+  <script>try{var d=localStorage.getItem('k13-dark');if(d==='1'||(d===null&&matchMedia('(prefers-color-scheme: dark)').matches))document.documentElement.classList.add('dark')}catch(e){}</script>
   <style>
-    :root{--discord:#5865F2;--twitch:#9147FF;--twitter:#1DA1F2;--t2:#6B7280;--t3:#9CA3AF}
-    .admin-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-    .full{grid-column:1/-1}
-    .form-group{margin-bottom:11px}
-    .form-lbl{display:block;font-size:12px;font-weight:600;color:var(--t2);margin-bottom:4px}
-    .form-input{width:100%;background:var(--bg);border:1px solid var(--border2);border-radius:8px;color:var(--text);font-size:13px;padding:8px 11px;outline:none}
-    .form-input:focus{border-color:var(--blue)}
-    .form-btn{background:var(--blue);border:none;border-radius:8px;color:#fff;font-size:13px;font-weight:600;padding:9px 20px;cursor:pointer}
-    .form-btn:hover{background:var(--blue-d)}
-    .verify-box{background:var(--bg);border:1px solid var(--border);border-radius:var(--r-lg);padding:16px;margin-bottom:16px}
-    .verify-result{margin-top:10px;padding:11px 14px;border-radius:8px;font-size:13px;display:none}
-    .verify-result.valid{background:var(--green-bg);border:1px solid var(--green-b);color:var(--green)}
-    .verify-result.invalid{background:var(--red-bg);border:1px solid var(--red-b);color:var(--red)}
-    .search-input{width:100%;background:var(--white);border:1px solid var(--border2);border-radius:8px;color:var(--text);font-size:13px;padding:8px 14px;outline:none;margin-bottom:12px}
-    .btn-sm{background:var(--bg);border:1px solid var(--border2);border-radius:6px;color:var(--t2);font-size:11px;font-weight:600;padding:4px 10px;cursor:pointer;margin-right:3px;transition:all .15s}
-    .btn-sm:hover{border-color:var(--blue);color:var(--blue)}
-    .btn-sm.danger:hover{border-color:var(--red);color:var(--red)}
-    .badge{background:var(--red);color:#fff;font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px;margin-left:6px}
-    .nav-btn{background:transparent;border:none;color:var(--t2);font-size:13px;font-weight:500;padding:7px 14px;border-radius:8px;cursor:pointer}
-    .nav-btn.active{background:var(--blue-l);color:var(--blue);font-weight:600}
-    .detail-chips{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px}
-    .detail-chip{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px 13px}
-    .chip-lbl{font-size:11px;color:var(--t2);margin-bottom:2px}
-    .chip-val{font-size:13px;font-weight:600}
-    .plat-chip{font-size:10px;font-weight:700;padding:2px 7px;border-radius:4px;text-transform:uppercase;letter-spacing:.5px}
-    .plat-chip.discord{background:#EEF2FF;color:var(--discord)}.plat-chip.twitch{background:#F5F3FF;color:var(--twitch)}.plat-chip.twitter{background:#EFF6FF;color:var(--twitter)}.plat-chip.tiktok{background:#F3F4F6;color:#111}.plat-chip.instagram{background:#FFF0F7;color:#E1306C}.plat-chip.epic{background:#ECFDF5;color:#059669}
-    .pill{font-size:11px;font-weight:600;padding:3px 9px;border-radius:20px}
-    .pill.active{background:var(--green-bg);color:var(--green)}.pill.used{background:var(--bg);color:var(--t3)}.pill.expired{background:var(--red-bg);color:var(--red)}.pill.bronze{background:#FEF3C7;color:#92400E}.pill.silver{background:#F3F4F6;color:#374151}.pill.gold{background:#FFFBEB;color:#92400E}.pill.pending{background:var(--amber-bg);color:var(--amber)}
-    .hidden{display:none!important}
-    .toast{position:fixed;bottom:24px;right:24px;border-radius:10px;padding:13px 18px;font-size:13px;font-weight:500;opacity:0;pointer-events:none;transition:opacity .25s,transform .25s;transform:translateY(6px);z-index:300;max-width:340px;box-shadow:0 4px 16px rgba(0,0,0,.12)}
-    .toast.show{opacity:1;transform:translateY(0)}.toast.info{background:#111;color:#fff}.toast.success{background:#059669;color:#fff}.toast.error{background:#DC2626;color:#fff}
-    .tbl{width:100%;border-collapse:collapse;font-size:13px}
-    .tbl th{text-align:left;color:var(--t2);font-weight:600;font-size:12px;padding:7px 10px;border-bottom:1px solid var(--border)}
-    .tbl td{padding:9px 10px;border-bottom:1px solid var(--border);vertical-align:middle}
-    .tbl tr:last-child td{border-bottom:none}
-    .tbl tr:hover td{background:#FAFAFA}
-    .empty-td{color:var(--t3);text-align:center;padding:20px!important}
-    .stat-card{background:var(--white);border:1px solid var(--border);border-radius:var(--r-lg);padding:16px 20px;box-shadow:var(--sh)}
-    .stat-lbl{font-size:12px;color:var(--t2);margin-bottom:4px;font-weight:500}
-    .stat-val{font-size:24px;font-weight:800;color:var(--text)}
-    .stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px}
-    .section-title{font-size:15px;font-weight:700;margin:20px 0 12px}
-    .card{background:var(--white);border:1px solid var(--border);border-radius:var(--r-lg);padding:16px;box-shadow:var(--sh)}
-    .detail-actions{margin-bottom:14px;display:flex;gap:8px;flex-wrap:wrap}
+    .apage{display:none;max-width:1140px;margin:0 auto;padding:22px 20px 60px}
+    .apage.active{display:block}
+    .nav{overflow-x:auto}
+    .nav-links{flex:1;overflow-x:auto;scrollbar-width:none}
+    .nav-links::-webkit-scrollbar{display:none}
+    .nav-link{flex-shrink:0}
+    .h1{font-family:'Sora',sans-serif;font-size:21px;font-weight:800;margin-bottom:4px}
+    .lead{font-size:13px;color:var(--t2);margin-bottom:18px}
+    .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+    .grid-form{display:grid;grid-template-columns:1fr 1fr;gap:0 12px}
+    .grid-form .span2{grid-column:1/-1}
+    .fg{margin-bottom:11px}
+    .fl{display:block;font-size:12px;font-weight:600;color:var(--t2);margin-bottom:4px}
+    .fh{font-size:11px;color:var(--t3);margin-top:3px}
+    .fi{width:100%;background:var(--bg);border:1px solid var(--border2);border-radius:8px;color:var(--text);font-size:13px;padding:8px 11px;outline:none;font-family:inherit}
+    .fi:focus{border-color:var(--blue)}
+    .card-title{font-size:14px;font-weight:700;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;gap:8px}
+    .kpis{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px;margin-bottom:16px}
+    .kpi{background:var(--white);border:1px solid var(--border);border-radius:var(--r-lg);padding:14px 16px;box-shadow:var(--sh)}
+    .kpi-lbl{font-size:12px;color:var(--t2);font-weight:500}
+    .kpi-val{font-family:'Sora',sans-serif;font-size:22px;font-weight:800}
+    .kpi.alert{border-color:var(--amber-b);background:var(--amber-bg);cursor:pointer}
+    .status-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
+    .status{font-size:12px;font-weight:600;padding:5px 11px;border-radius:20px;border:1px solid var(--border);background:var(--white)}
+    .status.ok{color:var(--green);border-color:var(--green-b)}
+    .status.ko{color:var(--red);border-color:var(--red-b)}
+    .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+    .toolbar .fi{flex:1;min-width:200px}
+    .actions{display:flex;gap:4px;flex-wrap:wrap}
+    .bar{background:var(--bg);border-radius:4px;height:8px;overflow:hidden}
+    .bar>div{height:100%;border-radius:4px}
+    .thumb{width:64px;height:44px;object-fit:cover;border-radius:6px;border:1px solid var(--border);display:block}
+    .danger-zone{border-color:var(--red-b)}
+    .chips{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin-bottom:14px}
+    .chip{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 11px}
+    .chip-lbl{font-size:11px;color:var(--t2)}
+    .chip-val{font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .amodal{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:flex-start;justify-content:center;z-index:200;padding:40px 16px;overflow-y:auto;backdrop-filter:blur(2px)}
+    .amodal-box{background:var(--white);border-radius:16px;padding:24px;width:100%;max-width:560px;box-shadow:0 20px 60px rgba(0,0,0,.25)}
+    .amodal-box.wide{max-width:900px}
+    .amodal-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:16px}
+    .amodal-title{font-size:17px;font-weight:700}
+    .clickable{cursor:pointer}
+    @media(max-width:760px){.grid2,.grid-form{grid-template-columns:1fr}}
   </style>
 </head>
-<body style="background:#F3F4F6;font-family:'Inter',sans-serif">
+<body>
 
 <!-- Auth -->
-<div id="admin-auth" style="min-height:100vh;display:flex;align-items:center;justify-content:center">
-  <div style="background:#fff;border:1px solid #E5E7EB;border-radius:20px;padding:40px;width:380px;box-shadow:0 4px 12px rgba(0,0,0,.08)">
-    <div style="display:flex;align-items:center;gap:12px;margin-bottom:28px;justify-content:center">
-      <img src="/img/k13-logo.png" alt="K13" style="height:40px;width:40px;object-fit:contain;filter:invert(0.1) sepia(1) saturate(5) hue-rotate(200deg)" />
-      <span style="font-family:'Sora',sans-serif;font-size:18px;font-weight:800">Admin</span>
-    </div>
-    <div class="form-group"><input type="password" id="admin-pwd" class="form-input" placeholder="Mot de passe admin" onkeydown="if(event.key==='Enter')adminLogin()"/></div>
-    <button class="form-btn" onclick="adminLogin()" style="width:100%">Accéder</button>
-    <p id="admin-err" style="color:#DC2626;font-size:12px;margin-top:10px;text-align:center"></p>
-  </div>
+<div id="admin-auth" class="auth-page">
+  <form class="auth-card" id="login-form">
+    <div class="auth-logo"><img src="/img/k13-logo.png" alt="K13" class="logo-img"/><span class="auth-logo-text">Admin</span></div>
+    <div class="fg"><input type="password" id="admin-pwd" class="fi" placeholder="Mot de passe admin" autocomplete="current-password" required autofocus/></div>
+    <button class="btn-primary full" type="submit">Accéder</button>
+    <p id="admin-err" style="color:var(--red);font-size:12px;text-align:center;min-height:18px"></p>
+  </form>
 </div>
 
 <!-- App -->
 <div id="admin-app" class="hidden">
   <nav class="nav">
-    <img src="/img/k13-logo.png" alt="K13" style="height:28px;width:28px;object-fit:contain;filter:invert(0.1) sepia(1) saturate(5) hue-rotate(200deg);margin-right:12px" />
-    <div style="display:flex;gap:2px;flex:1">
-      <button class="nav-btn active" onclick="adminPage('overview')">Vue d'ensemble</button>
-      <button class="nav-btn" onclick="adminPage('stats')">📊 Stats</button>
-      <button class="nav-btn" onclick="adminPage('users')">Membres</button>
-      <button class="nav-btn" onclick="adminPage('codes')">Codes</button>
-      <button class="nav-btn" onclick="adminPage('challenges')">Challenges</button>
-      <button class="nav-btn" onclick="adminPage('shop')">Boutique</button>
-      <button class="nav-btn" onclick="adminPage('ranking')">🏆 Live ranking</button>
-      <button class="nav-btn" onclick="adminPage('pending')">Validations <span class="badge" id="pending-badge">0</span></button>
+    <img src="/img/k13-logo.png" alt="K13" class="logo-img sm"/>
+    <div class="nav-links">
+      <button class="nav-link active" data-page="overview">Tableau de bord</button>
+      <button class="nav-link" data-page="pending">Validations <span class="nav-badge hidden" id="pending-badge"></span></button>
+      <button class="nav-link" data-page="users">Membres</button>
+      <button class="nav-link" data-page="challenges">Challenges</button>
+      <button class="nav-link" data-page="shop">Boutique <span class="nav-badge hidden" id="orders-badge"></span></button>
+      <button class="nav-link" data-page="codes">Codes</button>
+      <button class="nav-link" data-page="ranking">Live</button>
+      <button class="nav-link" data-page="settings">Paramètres</button>
     </div>
-    <a href="/"><button class="nav-btn">← Site</button></a>
-    <button class="nav-btn" onclick="document.documentElement.classList.toggle('dark');this.textContent=document.documentElement.classList.contains('dark')?'☀️':'🌙'" style="font-size:16px">🌙</button>
+    <div class="nav-right">
+      <a href="/" class="btn-sm ghost">← Site</a>
+      <button class="icon-btn" id="btn-dark" aria-label="Mode sombre">🌙</button>
+      <button class="icon-btn" id="btn-logout" title="Déconnexion" aria-label="Déconnexion">⎋</button>
+    </div>
   </nav>
 
-  <!-- STATS DÉTAILLÉES -->
-  <div class="page" id="admin-page-stats" style="max-width:1100px;margin:0 auto;padding:24px 20px">
-    <div style="font-size:22px;font-weight:800;font-family:'Sora',sans-serif;margin-bottom:12px">📊 Statistiques détaillées</div>
-    <div id="integration-status"></div>
-    <div class="stats-grid" style="margin-bottom:20px" id="detailed-stats-grid">
-      <div class="stat-card"><div class="stat-lbl">Total points distribués</div><div class="stat-val" id="ds-pts-total">–</div></div>
-      <div class="stat-card"><div class="stat-lbl">Membres actifs (7j)</div><div class="stat-val" id="ds-active">–</div></div>
-      <div class="stat-card"><div class="stat-lbl">Challenges complétés (total)</div><div class="stat-val" id="ds-ch-total">–</div></div>
-      <div class="stat-card"><div class="stat-lbl">Taux de conversion boutique</div><div class="stat-val" id="ds-conv">–</div></div>
+  <!-- OVERVIEW -->
+  <section class="apage active" id="page-overview">
+    <div class="h1">Tableau de bord</div>
+    <div class="status-row" id="integration-status"></div>
+    <div class="kpis">
+      <div class="kpi"><div class="kpi-lbl">Membres</div><div class="kpi-val" id="k-members">–</div></div>
+      <div class="kpi"><div class="kpi-lbl">Actifs (7 j)</div><div class="kpi-val" id="k-active">–</div></div>
+      <div class="kpi"><div class="kpi-lbl">Défis validés</div><div class="kpi-val" id="k-done">–</div></div>
+      <div class="kpi"><div class="kpi-lbl">Points distribués</div><div class="kpi-val" id="k-pts">–</div></div>
+      <div class="kpi"><div class="kpi-lbl">Codes utilisés / générés</div><div class="kpi-val" id="k-codes">–</div></div>
+      <div class="kpi"><div class="kpi-lbl">Membres ayant acheté</div><div class="kpi-val" id="k-conv">–</div></div>
+      <div class="kpi alert hidden" id="k-pending-card" data-page="pending"><div class="kpi-lbl">⏳ Validations en attente</div><div class="kpi-val" id="k-pending">–</div></div>
+      <div class="kpi alert hidden" id="k-orders-card" data-page="shop"><div class="kpi-lbl">📦 Commandes à traiter</div><div class="kpi-val" id="k-orders">–</div></div>
     </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:20px">
-      <div class="card">
-        <div style="font-size:14px;font-weight:700;margin-bottom:12px">Répartition par rang</div>
-        <div id="rank-chart"></div>
-      </div>
-      <div class="card">
-        <div style="font-size:14px;font-weight:700;margin-bottom:12px">Challenges les + complétés</div>
-        <table class="tbl" style="font-size:12px"><thead><tr><th>Challenge</th><th>Complétions</th></tr></thead>
-        <tbody id="top-challenges-tbl"></tbody></table>
-      </div>
+    <div class="grid2" style="margin-bottom:14px">
+      <div class="card"><div class="card-title">Répartition par rang</div><div id="rank-chart"></div></div>
+      <div class="card"><div class="card-title">Défis les plus complétés</div>
+        <table class="tbl"><tbody id="top-challenges-tbl"></tbody></table></div>
     </div>
     <div class="card" style="margin-bottom:14px">
-      <div style="font-size:14px;font-weight:700;margin-bottom:12px">Activité Discord — Top messages (7 derniers jours)</div>
-      <table class="tbl" style="font-size:12px">
-        <thead><tr><th>Membre</th><th>Messages (7j)</th><th>Vocal (7j)</th><th>Dernière activité</th></tr></thead>
-        <tbody id="discord-activity-tbl"></tbody>
-      </table>
+      <div class="card-title">Activité Discord (7 derniers jours)</div>
+      <table class="tbl"><thead><tr><th>Membre</th><th>Messages</th><th>Vocal</th><th>Dernière activité</th></tr></thead>
+        <tbody id="discord-activity-tbl"></tbody></table>
     </div>
     <div class="card">
-      <div style="font-size:14px;font-weight:700;margin-bottom:12px">Nouveaux inscrits (30 derniers jours)</div>
-      <table class="tbl" style="font-size:12px">
-        <thead><tr><th>Pseudo</th><th>Discord</th><th>Twitch</th><th>Points</th><th>Inscrit le</th></tr></thead>
-        <tbody id="new-users-tbl"></tbody>
-      </table>
+      <div class="card-title">Nouveaux inscrits (30 jours)</div>
+      <table class="tbl"><thead><tr><th>Pseudo</th><th>Twitch</th><th>Points</th><th>Inscrit le</th></tr></thead>
+        <tbody id="new-users-tbl"></tbody></table>
     </div>
-  </div>
+  </section>
 
-  <!-- OVERVIEW -->
-  <div class="page active" id="admin-page-overview" style="max-width:1100px;margin:0 auto;padding:24px 20px">
-    <div class="stats-grid">
-      <div class="stat-card"><div class="stat-lbl">Membres</div><div class="stat-val" id="a-members">–</div></div>
-      <div class="stat-card"><div class="stat-lbl">Codes générés</div><div class="stat-val" id="a-codes">–</div></div>
-      <div class="stat-card"><div class="stat-lbl">Codes utilisés</div><div class="stat-val" id="a-used">–</div></div>
-      <div class="stat-card"><div class="stat-lbl">En attente</div><div class="stat-val" id="a-pending">–</div></div>
-    </div>
-    <div class="section-title">Classement membres</div>
+  <!-- PENDING -->
+  <section class="apage" id="page-pending">
+    <div class="h1">Validations en attente</div>
+    <p class="lead">Screenshots à vérifier (abonnement Twitch, code créateur Epic…). Clique sur une image pour l'agrandir.</p>
     <div class="card"><table class="tbl">
-      <thead><tr><th>Membre</th><th>Points</th><th>Rang</th><th>Discord</th><th>Twitch</th><th>Twitter</th><th>TikTok</th><th>Msgs</th><th>Vocal</th><th>Watch</th><th>Défis</th><th></th></tr></thead>
-      <tbody id="overview-tbl"></tbody>
+      <thead><tr><th>Membre</th><th>Défi</th><th>Screenshot</th><th>Envoyé le</th><th></th></tr></thead>
+      <tbody id="pending-tbl"></tbody>
     </table></div>
-    <!-- Detail panel (shared) -->
-    <div id="detail-section" class="hidden" style="margin-top:24px">
-      <div class="section-title" id="detail-title">Détail membre</div>
-      <div class="detail-actions" id="detail-actions"></div>
-      <div class="detail-chips" id="detail-chips"></div>
-      <div class="section-title" style="font-size:13px">Challenges</div>
-      <div class="card"><table class="tbl">
-        <thead><tr><th>Nom</th><th>Plateforme</th><th>Points</th><th>Statut</th><th>Actions</th></tr></thead>
-        <tbody id="detail-challenges"></tbody>
-      </table></div>
-    </div>
-  </div>
+  </section>
 
-  <!-- MEMBERS -->
-  <div class="page" id="admin-page-users" style="max-width:1100px;margin:0 auto;padding:24px 20px">
-    <input class="search-input" id="user-search" placeholder="Rechercher par pseudo ou Discord…" oninput="filterUsers()"/>
+  <!-- USERS -->
+  <section class="apage" id="page-users">
+    <div class="h1">Membres</div>
+    <p class="lead" id="users-lead"></p>
+    <div class="toolbar"><input class="fi" id="user-search" placeholder="Rechercher par pseudo, Discord, Twitch…" type="search"/></div>
     <div class="card"><table class="tbl">
-      <thead><tr><th>Pseudo</th><th>Points</th><th>Rang</th><th>Comptes</th><th>Défis</th><th>Watch Twitch</th><th>Discord msgs</th><th>Discord vocal</th><th>Actions</th></tr></thead>
+      <thead><tr><th>Membre</th><th>Points</th><th>Rang</th><th>Comptes</th><th>Défis</th><th>Twitch</th><th>Msgs</th><th>Vocal</th><th>Vu le</th></tr></thead>
       <tbody id="users-tbl"></tbody>
     </table></div>
-    <div id="user-detail" class="hidden" style="margin-top:20px">
-      <div class="section-title" id="detail-title2">–</div>
-      <div class="detail-actions" id="detail-actions2"></div>
-      <div class="detail-chips" id="detail-chips2"></div>
-      <div class="section-title" style="font-size:13px">Challenges</div>
-      <div class="card"><table class="tbl">
-        <thead><tr><th>Nom</th><th>Plateforme</th><th>Points</th><th>Statut</th><th>Actions admin</th></tr></thead>
-        <tbody id="detail-challenges2"></tbody>
-      </table></div>
-    </div>
-  </div>
-
-  <!-- CODES -->
-  <div class="page" id="admin-page-codes" style="max-width:900px;margin:0 auto;padding:24px 20px">
-    <div class="verify-box">
-      <div style="font-size:14px;font-weight:700;margin-bottom:12px">Vérifier un code</div>
-      <div style="display:flex;gap:8px">
-        <input class="form-input" id="verify-input" placeholder="K13-GOLD-XXXXXX" style="font-family:monospace;flex:1"/>
-        <button class="form-btn" onclick="verifyCode()">Vérifier</button>
-      </div>
-      <div id="verify-result" class="verify-result"></div>
-      <div id="mark-used" class="hidden" style="margin-top:10px">
-        <button class="form-btn" style="background:var(--t2)" onclick="markUsed()">Marquer utilisé</button>
-      </div>
-    </div>
-    <div class="card"><table class="tbl">
-      <thead><tr><th>Code</th><th>Membre</th><th>Réduction</th><th>Généré</th><th>Expire</th><th>Statut</th></tr></thead>
-      <tbody id="codes-tbl"></tbody>
-    </table></div>
-  </div>
+  </section>
 
   <!-- CHALLENGES -->
-  <div class="page" id="admin-page-challenges" style="max-width:1000px;margin:0 auto;padding:24px 20px">
-    <div class="admin-grid" style="margin-bottom:20px">
-      <div class="card">
-        <div style="font-size:14px;font-weight:700;margin-bottom:14px">Créer un challenge</div>
-        <div class="form-group"><label class="form-lbl">Plateforme</label>
-          <select class="form-input" id="nc-platform"><option value="discord">Discord</option><option value="twitch">Twitch</option><option value="twitter">Twitter/X</option><option value="tiktok">TikTok</option><option value="instagram">Instagram</option><option value="epic">Epic Games</option></select></div>
-        <div class="form-group"><label class="form-lbl">Type</label>
-          <select class="form-input" id="nc-type" onchange="toggleTypeFields()">
-            <option value="redirect">🔗 Lien + timer (Twitter/TikTok/Insta)</option>
-            <option value="screen">📸 Screenshot (follow/sub avec screen)</option>
-            <option value="watchtime">📺 Watch time Twitch (automatique)</option>
-            <option value="messages">💬 Messages Discord (automatique)</option>
-            <option value="vocal">🎙️ Temps en vocal Discord (automatique)</option>
-            <option value="join">🚪 Rejoindre serveur Discord</option>
-            <option value="invite">🎟️ Inviter quelqu'un sur Discord</option>
-          </select></div>
-        <div class="form-group hidden" id="nc-value-group"><label class="form-lbl">Valeur seuil (secondes ou nombre)</label><input class="form-input" id="nc-value" type="number" placeholder="ex: 3600"/></div>
-        <div class="form-group hidden" id="nc-redirect-group">
-          <label class="form-lbl">URL de redirection</label><input class="form-input" id="nc-redirect-url" placeholder="https://..."/>
-          <label class="form-lbl" style="margin-top:8px">Délai timer (secondes)</label><input class="form-input" id="nc-redirect-delay" type="number" value="20"/>
-        </div>
-        <div class="form-group"><label class="form-lbl">Slug unique</label><input class="form-input" id="nc-slug" placeholder="ex: twitch-watch-2h"/></div>
-        <div class="form-group"><label class="form-lbl">Nom</label><input class="form-input" id="nc-name" placeholder="ex: 2h de visionnage Twitch"/></div>
-        <div class="form-group"><label class="form-lbl">Description</label><input class="form-input" id="nc-desc" placeholder="Description courte"/></div>
-        <div class="form-group"><label class="form-lbl">Points</label><input class="form-input" id="nc-pts" type="number" placeholder="50"/></div>
-        <div class="form-group"><label class="form-lbl">Répétition (0=jamais, 86400=quotidien, 604800=hebdo)</label><input class="form-input" id="nc-repeat" type="number" value="0"/></div>
-        <div class="form-group"><label class="form-lbl">Catégorie</label>
-          <select class="form-input" id="nc-category"><option value="permanent">Permanent</option><option value="daily">Quotidien</option><option value="weekly">Hebdomadaire</option><option value="monthly">Mensuel</option><option value="contest">Concours</option></select></div>
-        <div class="form-group"><label class="form-lbl">Extra JSON (optionnel)</label><input class="form-input" id="nc-extra" placeholder="{}"/></div>
-        <button class="form-btn" onclick="createChallenge()">Créer le challenge</button>
-      </div>
-      <!-- Panel édition challenge -->
-      <div id="edit-challenge-panel" class="card hidden" style="margin-bottom:20px;border:2px solid var(--blue)">
-        <div style="font-size:14px;font-weight:700;margin-bottom:14px;color:var(--blue)">✏️ Modifier le challenge</div>
-        <input type="hidden" id="ec-id"/>
-        <div class="admin-grid">
-          <div class="form-group"><label class="form-lbl">Nom</label><input class="form-input" id="ec-name"/></div>
-          <div class="form-group"><label class="form-lbl">Points</label><input class="form-input" type="number" id="ec-pts"/></div>
-          <div class="form-group" style="grid-column:1/-1"><label class="form-lbl">Description</label><input class="form-input" id="ec-desc"/></div>
-          <div class="form-group"><label class="form-lbl">Type</label>
-            <select class="form-input" id="ec-type">
-              <option value="redirect">🔗 Lien + timer</option>
-              <option value="screen">📸 Screenshot</option>
-              <option value="watchtime">📺 Watch time</option>
-              <option value="messages">💬 Messages Discord</option>
-              <option value="vocal">🎙️ Vocal Discord</option>
-              <option value="join">🚪 Rejoindre Discord</option>
-              <option value="follow">✓ Follow (API auto)</option>
-            </select>
-          </div>
-          <div class="form-group"><label class="form-lbl">Catégorie</label>
-            <select class="form-input" id="ec-category">
-              <option value="permanent">Permanent</option>
-              <option value="daily">Quotidien</option>
-              <option value="weekly">Hebdomadaire</option>
-              <option value="monthly">Mensuel</option>
-              <option value="contest">Concours</option>
-            </select>
-          </div>
-          <div class="form-group"><label class="form-lbl">Répétition (0=jamais, 86400=quotidien)</label><input class="form-input" type="number" id="ec-repeat"/></div>
-          <div class="form-group"><label class="form-lbl">Valeur seuil (msgs, secondes…)</label><input class="form-input" type="number" id="ec-required"/></div>
-          <div class="form-group"><label class="form-lbl">URL de redirection</label><input class="form-input" id="ec-redirect-url"/></div>
-          <div class="form-group"><label class="form-lbl">Délai timer (secondes)</label><input class="form-input" type="number" id="ec-redirect-delay"/></div>
-        </div>
-        <div style="display:flex;gap:8px;margin-top:8px">
-          <button class="form-btn" onclick="saveEditChallenge()">💾 Sauvegarder</button>
-          <button class="form-btn" style="background:var(--t2)" onclick="document.getElementById('edit-challenge-panel').classList.add('hidden')">Annuler</button>
-        </div>
-      </div>
-      <div class="card full">
-        <div style="font-size:14px;font-weight:700;margin-bottom:14px">Challenges existants</div>
-<button class="form-btn" style="background:var(--red);margin-bottom:12px;font-size:12px" onclick="resetAll()">⚠️ Tout réinitialiser</button>
-        <table class="tbl"><thead><tr><th>Plateforme</th><th>Nom / Type</th><th>Points</th><th>Catégorie</th><th>Répétition</th><th>Statut</th><th>Actions</th></tr></thead>
-        <tbody id="challenges-tbl"></tbody></table>
-      </div>
+  <section class="apage" id="page-challenges">
+    <div class="toolbar" style="justify-content:space-between">
+      <div><div class="h1">Challenges</div></div>
+      <button class="btn-primary sm" id="btn-new-ch">+ Nouveau challenge</button>
     </div>
-  </div>
+    <div class="toolbar">
+      <select class="fi" id="ch-filter-plat" style="flex:0 0 auto;min-width:0;width:auto">
+        <option value="all">Toutes les plateformes</option><option value="discord">Discord</option><option value="twitch">Twitch</option><option value="twitter">Twitter/X</option><option value="tiktok">TikTok</option><option value="instagram">Instagram</option><option value="epic">Epic Games</option>
+      </select>
+      <label class="switch"><input type="checkbox" id="ch-show-inactive"/><span>Afficher les inactifs</span></label>
+    </div>
+    <div class="card"><table class="tbl">
+      <thead><tr><th>Plateforme</th><th>Nom / type</th><th>Points</th><th>Période</th><th>Validations</th><th>Statut</th><th></th></tr></thead>
+      <tbody id="challenges-tbl"></tbody>
+    </table></div>
+  </section>
 
   <!-- SHOP -->
-  <div class="page" id="admin-page-shop" style="max-width:1000px;margin:0 auto;padding:24px 20px">
-    <div class="admin-grid" style="margin-bottom:20px">
-      <div class="card">
-        <div style="font-size:14px;font-weight:700;margin-bottom:14px">Ajouter un article</div>
-        <div class="form-group"><label class="form-lbl">Nom</label><input class="form-input" id="si-name" placeholder="Code -15%"/></div>
-        <div class="form-group"><label class="form-lbl">Description</label><input class="form-input" id="si-desc"/></div>
-        <div class="form-group"><label class="form-lbl">Type</label>
-          <select class="form-input" id="si-type" onchange="updateShopTypeFields()"><option value="promo_code">Code promo</option><option value="discord_role">Rôle Discord</option><option value="product">Produit</option></select></div>
-        <div class="form-group"><label class="form-lbl">Coût (points)</label><input class="form-input" id="si-pts" type="number" placeholder="500"/></div>
-        <div class="form-group"><label class="form-lbl">Stock (-1 = ∞)</label><input class="form-input" id="si-stock" type="number" value="-1"/></div>
-        <div class="form-group" id="si-role-group" style="display:none"><label class="form-lbl">ID du rôle Discord</label><input class="form-input" id="si-role-id" placeholder="Ex: 1234567890123456789"/></div>
-        <div class="form-group" id="si-promo-group" style="display:none">
-          <label class="form-lbl">Réduction (%)</label><input class="form-input" id="si-discount" type="number" placeholder="10" style="margin-bottom:6px"/>
-          <label class="form-lbl">Tier (bronze/silver/gold)</label><input class="form-input" id="si-tier" placeholder="silver"/>
-        </div>
-        <div class="form-group" id="si-extra-group"><label class="form-lbl">Extra JSON (optionnel)</label><input class="form-input" id="si-extra" placeholder="{}"/></div>
-        <button class="form-btn" onclick="addShopItem()">Ajouter</button>
-      </div>
-      <div class="card full">
-        <div style="font-size:14px;font-weight:700;margin-bottom:14px">Articles</div>
-        <table class="tbl"><thead><tr><th>Nom</th><th>Type</th><th>Coût</th><th>Stock</th><th>Statut</th><th></th></tr></thead>
-        <tbody id="shop-tbl"></tbody></table>
-      </div>
+  <section class="apage" id="page-shop">
+    <div class="toolbar" style="justify-content:space-between">
+      <div class="h1">Boutique</div>
+      <button class="btn-primary sm" id="btn-new-item">+ Nouvel article</button>
     </div>
-    <div style="font-size:15px;font-weight:700;margin-bottom:12px">Commandes récentes</div>
+    <div class="card" style="margin-bottom:18px"><table class="tbl">
+      <thead><tr><th>Article</th><th>Type</th><th>Coût</th><th>Stock</th><th>Vendus</th><th>Statut</th><th></th></tr></thead>
+      <tbody id="shop-tbl"></tbody>
+    </table></div>
+    <div class="section-title">Commandes</div>
     <div class="card"><table class="tbl">
       <thead><tr><th>Membre</th><th>Article</th><th>Résultat</th><th>Date</th><th>Statut</th></tr></thead>
       <tbody id="orders-tbl"></tbody>
     </table></div>
-  </div>
+  </section>
 
+  <!-- CODES -->
+  <section class="apage" id="page-codes">
+    <div class="h1">Codes promo</div>
+    <p class="lead">Vérifie et marque comme utilisé un code présenté par un membre.</p>
+    <form class="card" id="verify-form" style="margin-bottom:16px">
+      <div class="toolbar" style="margin:0">
+        <input class="fi" id="verify-input" placeholder="K13-GOLD-XXXXXX" style="font-family:monospace;text-transform:uppercase" required/>
+        <button class="btn-primary sm" type="submit">Vérifier</button>
+      </div>
+      <div id="verify-result" class="hidden" style="margin-top:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap"></div>
+    </form>
+    <div class="toolbar"><input class="fi" id="code-search" placeholder="Filtrer les codes…" type="search"/></div>
+    <div class="card"><table class="tbl">
+      <thead><tr><th>Code</th><th>Membre</th><th>Réduction</th><th>Généré</th><th>Expire</th><th>Statut</th></tr></thead>
+      <tbody id="codes-tbl"></tbody>
+    </table></div>
+  </section>
 
   <!-- RANKING -->
-  <div class="page" id="admin-page-ranking" style="max-width:900px;margin:0 auto;padding:24px 20px">
-    <div style="font-size:22px;font-weight:800;font-family:'Sora',sans-serif;margin-bottom:8px">🏆 Classement Live Twitch</div>
-    <p style="font-size:14px;color:var(--t2);margin-bottom:20px">Membres les plus actifs sur les streams K13</p>
+  <section class="apage" id="page-ranking">
+    <div class="h1">Classement visionnage Twitch</div>
+    <p class="lead">Membres les plus présents sur les lives K13.</p>
     <div class="card"><table class="tbl">
-      <thead><tr><th>#</th><th>Membre</th><th>Twitch</th><th>Total visionnage</th><th>Sessions</th><th>Dernier live</th></tr></thead>
+      <thead><tr><th>#</th><th>Membre</th><th>Twitch</th><th>Total</th><th>7 derniers jours</th><th>Dernière activité</th></tr></thead>
       <tbody id="ranking-tbl"></tbody>
     </table></div>
-  </div>
+  </section>
 
-  <!-- PENDING -->
-  <div class="page" id="admin-page-pending" style="max-width:900px;margin:0 auto;padding:24px 20px">
-    <div style="font-size:22px;font-weight:800;font-family:'Sora',sans-serif;margin-bottom:8px">Validations en attente</div>
-    <p style="font-size:14px;color:var(--t2);margin-bottom:20px">Challenges nécessitant une validation manuelle (TikTok, Instagram, Epic…)</p>
-    <div class="card"><table class="tbl">
-      <thead><tr><th>Membre</th><th>Challenge</th><th>Plateforme</th><th>Screenshot</th><th>Demandé le</th><th>Actions</th></tr></thead>
-      <tbody id="pending-tbl"></tbody>
-    </table></div>
-  </div>
+  <!-- SETTINGS -->
+  <section class="apage" id="page-settings">
+    <div class="h1">Paramètres</div>
+    <p class="lead">Diagnostics des intégrations, mot de passe et remise à zéro.</p>
+    <div class="grid2">
+      <div class="card">
+        <div class="card-title">Diagnostics</div>
+        <div class="actions" style="margin-bottom:10px">
+          <button class="btn-sm" data-diag="twitch">Tester Twitch</button>
+          <button class="btn-sm" data-diag="streamelements">Tester StreamElements</button>
+        </div>
+        <div id="diag-result" class="muted"></div>
+      </div>
+      <form class="card" id="pwd-form">
+        <div class="card-title">Mot de passe admin</div>
+        <div class="fg"><input class="fi" type="password" id="new-pwd" placeholder="Nouveau mot de passe (10 caractères min.)" minlength="10" autocomplete="new-password" required/></div>
+        <div class="fg"><input class="fi" type="password" id="new-pwd2" placeholder="Confirmer" minlength="10" autocomplete="new-password" required/></div>
+        <button class="btn-primary sm" type="submit">Changer</button>
+      </form>
+      <div class="card danger-zone" style="grid-column:1/-1">
+        <div class="card-title" style="color:var(--red)">⚠️ Zone dangereuse</div>
+        <p class="muted" style="margin-bottom:10px">Réinitialise les défis, compteurs (messages, vocal, visionnage, invitations) de <strong>tous</strong> les membres.</p>
+        <button class="btn-sm danger" id="btn-reset-all">Tout réinitialiser…</button>
+      </div>
+    </div>
+  </section>
 </div>
 
-<div class="toast" id="toast"></div>
+<div id="amodal" class="amodal hidden"><div class="amodal-box" id="amodal-box"></div></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
 <script src="/js/admin.js"></script>
-<script>
-// Fix pour les detail panels selon la page active
-const origLoad=loadUserDetail;
-loadUserDetail=async function(id){
-  const page=document.querySelector('.page.active')?.id;
-  // Redirige le panel detail vers la bonne page
-  if(page==='admin-page-users'){
-    const res=await api('GET',`/api/admin/users/${id}`);
-    if(!res.ok) return;
-    const u=res.user;
-    show('user-detail');
-    el('detail-title2').textContent=`${u.discord_username||u.username} — Détail`;
-    el('detail-chips2').innerHTML=[chip('Points',u.points),chip('Rang',cap(u.rank||'bronze')),chip('Discord',u.discord_username?'@'+u.discord_username:'–'),chip('Twitch',u.twitch_login?'@'+u.twitch_login:'–'),chip('Twitter',u.twitter_login?'@'+u.twitter_login:'–'),chip('TikTok',u.tiktok_username?'@'+u.tiktok_username:'–'),chip('Epic',u.epic_username||'–'),chip('Inscrit',fmtDate(u.created_at)),chip('Vu le',fmtDate(u.last_seen))].join('');
-    el('detail-actions2').innerHTML=`<button class="btn-sm" onclick="adjustPoints(${u.id},'${esc(u.discord_username||u.username)}')">± Ajuster les points</button>`;
-    el('detail-challenges2').innerHTML=res.challenges.map(c=>{const s=c.status;const pill=!s?'<span class="pill used">Non fait</span>':s.verified===1?'<span class="pill active">✓ Validé</span>':'<span class="pill pending">⏳ En attente</span>';const actions=`<button class="btn-sm" onclick="adminValidateCh(${u.id},${c.id},'${esc(c.name)}')">✓ Valider</button><button class="btn-sm danger" onclick="adminRemoveCh(${u.id},${c.id},'${esc(c.name)}')">✗ Retirer</button>`;return`<tr><td>${esc(c.name)}</td><td><span class="plat-chip ${c.platform}">${cap(c.platform)}</span></td><td style="font-weight:600;color:var(--blue)">+${c.points} pts</td><td>${pill}</td><td>${actions}</td></tr>`;}).join('');
-    el('user-detail').scrollIntoView({behavior:'smooth'});
-  } else {
-    origLoad(id);
-    el('detail-section').scrollIntoView({behavior:'smooth'});
-  }
-};
-</script>
 </body>
 </html>

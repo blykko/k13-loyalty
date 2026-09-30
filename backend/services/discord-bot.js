@@ -14,9 +14,8 @@
  *   ✅ PRESENCE INTENT (optionnel, pour le vocal)
  */
 
-const { Client, GatewayIntentBits, Events, PermissionFlagsBits } = require('discord.js');
+const { Client, GatewayIntentBits, Events } = require('discord.js');
 const discord = require('./discord');
-const { recordInvite } = require('./discord');
 
 let client = null;
 
@@ -25,6 +24,28 @@ const vocalSessions = new Map();
 
 // Intervalle de sauvegarde du temps vocal (toutes les 60s)
 let vocalInterval = null;
+
+// Anti-spam : un message compte au maximum toutes les MESSAGE_COOLDOWN_MS par membre
+const MESSAGE_COOLDOWN_MS = 3000;
+const lastMessageAt = new Map();
+
+// Un membre compte en vocal s'il est dans un salon qui n'est pas l'AFK et qu'il n'est pas sourd
+function countsAsVocal(state) {
+  if (!state?.channelId) return false;
+  if (state.guild?.afkChannelId && state.channelId === state.guild.afkChannelId) return false;
+  if (state.selfDeaf || state.serverDeaf) return false;
+  return true;
+}
+
+// Clôture la session vocale en cours et enregistre le temps
+function flushVocal(userId) {
+  const session = vocalSessions.get(userId);
+  if (!session) return;
+  vocalSessions.delete(userId);
+  const seconds = Math.floor((Date.now() - session.joinedAt) / 1000);
+  // Les passages de moins de 30s (hors sessions déjà créditées périodiquement) sont ignorés
+  if (seconds > 0 && (seconds >= 30 || session.credited)) discord.recordVocalSeconds(userId, seconds);
+}
 
 function startBot() {
   const token = process.env.DISCORD_BOT_TOKEN;
@@ -51,10 +72,18 @@ function startBot() {
 
   client.once(Events.ClientReady, async c => {
     console.log(`[Bot Discord] Connecté en tant que ${c.user.tag}`);
-    vocalInterval = setInterval(() => saveAllVocalSessions(), 60_000);
+    vocalInterval = setInterval(() => {
+      saveAllVocalSessions();
+      const limit = Date.now() - MESSAGE_COOLDOWN_MS;
+      for (const [id, t] of lastMessageAt) if (t < limit) lastMessageAt.delete(id);
+    }, 60_000);
     // Charge les invitations existantes au démarrage
     try {
       const guild = await c.guilds.fetch(guildId);
+      // Reprend les membres déjà en vocal au démarrage du bot
+      guild.voiceStates.cache.forEach(vs => {
+        if (!vs.member?.user?.bot && countsAsVocal(vs)) vocalSessions.set(vs.id, { channelId: vs.channelId, joinedAt: Date.now() });
+      });
       const invites = await guild.invites.fetch();
       invites.forEach(inv => inviteCache.set(inv.code, { uses: inv.uses, inviterId: inv.inviter?.id }));
       console.log(`[Bot Discord] ${invites.size} invitations en cache`);
@@ -71,8 +100,11 @@ function startBot() {
     // Ignore les bots et les DM
     if (message.author.bot) return;
     if (!message.guild || message.guild.id !== guildId) return;
-    // Ignore les messages trop courts (anti-spam)
+    // Ignore les messages trop courts et le flood (anti-spam)
     if (message.content.trim().length < 2) return;
+    const now = Date.now();
+    if (now - (lastMessageAt.get(message.author.id) || 0) < MESSAGE_COOLDOWN_MS) return;
+    lastMessageAt.set(message.author.id, now);
 
     discord.recordMessage(message.author.id);
   });
@@ -83,31 +115,11 @@ function startBot() {
     const userId = newState.member?.user?.id;
     if (!userId || newState.member?.user?.bot) return;
 
-    const wasInVoice = !!oldState.channelId;
-    const isInVoice  = !!newState.channelId;
+    const wasCounting = vocalSessions.has(userId);
+    const counts = countsAsVocal(newState);
 
-    if (!wasInVoice && isInVoice) {
-      // Rejoint un salon vocal
-      vocalSessions.set(userId, { channelId: newState.channelId, joinedAt: Date.now() });
-      console.log(`[Bot Discord] ${userId} rejoint le vocal #${newState.channel?.name}`);
-    } else if (wasInVoice && !isInVoice) {
-      // Quitte le salon vocal
-      const session = vocalSessions.get(userId);
-      if (session) {
-        const seconds = Math.floor((Date.now() - session.joinedAt) / 1000);
-        if (seconds > 30) { // Ignore les passages < 30s
-          discord.recordVocalSeconds(userId, seconds);
-          console.log(`[Bot Discord] ${userId} vocal ${seconds}s enregistrés`);
-        }
-        vocalSessions.delete(userId);
-      }
-    } else if (wasInVoice && isInVoice && oldState.channelId !== newState.channelId) {
-      // Change de salon — sauvegarde l'ancien et démarre un nouveau
-      const session = vocalSessions.get(userId);
-      if (session) {
-        const seconds = Math.floor((Date.now() - session.joinedAt) / 1000);
-        if (seconds > 30) discord.recordVocalSeconds(userId, seconds);
-      }
+    if (wasCounting && (!counts || oldState.channelId !== newState.channelId)) flushVocal(userId);
+    if (counts && !vocalSessions.has(userId)) {
       vocalSessions.set(userId, { channelId: newState.channelId, joinedAt: Date.now() });
     }
   });
@@ -147,19 +159,20 @@ function startBot() {
 
 // Sauvegarde périodique des sessions vocales actives (au cas où le bot redémarre)
 function saveAllVocalSessions() {
+  const now = Date.now();
   for (const [userId, session] of vocalSessions.entries()) {
-    const seconds = Math.floor((Date.now() - session.joinedAt) / 1000);
-    if (seconds > 30) {
+    const seconds = Math.floor((now - session.joinedAt) / 1000);
+    if (seconds >= 30) {
       discord.recordVocalSeconds(userId, seconds);
       // Remet le timer à zéro pour éviter de double-compter
-      vocalSessions.set(userId, { ...session, joinedAt: Date.now() });
+      vocalSessions.set(userId, { ...session, joinedAt: now, credited: true });
     }
   }
 }
 
 function stopBot() {
   if (vocalInterval) clearInterval(vocalInterval);
-  saveAllVocalSessions();
+  for (const userId of [...vocalSessions.keys()]) flushVocal(userId);
   client?.destroy();
 }
 

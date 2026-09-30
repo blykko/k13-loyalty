@@ -3,41 +3,54 @@
 <head>
   <meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/>
   <title>K13 Loyalty</title>
+  <meta name="theme-color" content="#2563EB"/>
+  <link rel="icon" href="/img/k13-logo.png"/>
   <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Sora:wght@700;800&display=swap">
   <link rel="stylesheet" href="/css/app.css"/>
+  <script>try{var d=localStorage.getItem('k13-dark');if(d==='1'||(d===null&&matchMedia('(prefers-color-scheme: dark)').matches))document.documentElement.classList.add('dark')}catch(e){}</script>
 </head>
 <body>
 
+<!-- Chargement initial -->
+<div id="boot" class="boot"><div class="spinner"></div></div>
+
 <!-- AUTH -->
-<div id="auth-page" class="auth-page">
+<div id="auth-page" class="auth-page hidden">
   <div class="auth-card">
-    <div class="auth-logo"><img src="/img/k13-logo.png" alt="K13" style="height:52px;width:52px;object-fit:contain;filter:invert(0.1) sepia(1) saturate(5) hue-rotate(200deg)" /><span class="auth-logo-text">K13 Loyalty</span></div>
+    <div class="auth-logo"><img src="/img/k13-logo.png" alt="K13" class="logo-img"/><span class="auth-logo-text">K13 Loyalty</span></div>
     <h1 class="auth-title">Programme de fidélité</h1>
     <p class="auth-subtitle">Gagne des points en soutenant K13, et débloque des réductions exclusives.</p>
+    <ul class="auth-perks">
+      <li><span>🎯</span> Relève des défis Discord, Twitch et réseaux</li>
+      <li><span>🏅</span> Monte de rang : Bronze → Silver → Gold</li>
+      <li><span>🎟️</span> Échange tes points contre des codes promo</li>
+    </ul>
     <a href="/auth/discord" class="btn-discord">
-      <svg width="20" height="20" viewBox="0 0 71 55" fill="white"><path d="M60.1 4.9A58.5 58.5 0 0 0 45.5.4a40.6 40.6 0 0 0-1.7 3.5 54.1 54.1 0 0 0-16.5 0A38.2 38.2 0 0 0 25.5.4 58.4 58.4 0 0 0 10.9 5C1.6 18.7-.9 32 .3 45.1a58.9 58.9 0 0 0 18 9.1 42.7 42.7 0 0 0 3.7-6 38.4 38.4 0 0 1-5.9-2.8l1.4-1.1a42 42 0 0 0 35.9 0l1.4 1.1a38.3 38.3 0 0 1-5.9 2.9 42.6 42.6 0 0 0 3.7 6 58.8 58.8 0 0 0 18-9.2C72 29.8 68.2 16.5 60.1 4.9ZM23.7 37.3c-3.6 0-6.5-3.3-6.5-7.3s2.8-7.3 6.5-7.3c3.6 0 6.5 3.3 6.5 7.3s-2.9 7.3-6.5 7.3Zm23.5 0c-3.6 0-6.5-3.3-6.5-7.3s2.8-7.3 6.5-7.3c3.6 0 6.5 3.3 6.5 7.3s-2.9 7.3-6.5 7.3Z"/></svg>
+      <svg width="20" height="20" viewBox="0 0 71 55" fill="white" aria-hidden="true"><path d="M60.1 4.9A58.5 58.5 0 0 0 45.5.4a40.6 40.6 0 0 0-1.7 3.5 54.1 54.1 0 0 0-16.5 0A38.2 38.2 0 0 0 25.5.4 58.4 58.4 0 0 0 10.9 5C1.6 18.7-.9 32 .3 45.1a58.9 58.9 0 0 0 18 9.1 42.7 42.7 0 0 0 3.7-6 38.4 38.4 0 0 1-5.9-2.8l1.4-1.1a42 42 0 0 0 35.9 0l1.4 1.1a38.3 38.3 0 0 1-5.9 2.9 42.6 42.6 0 0 0 3.7 6 58.8 58.8 0 0 0 18-9.2C72 29.8 68.2 16.5 60.1 4.9ZM23.7 37.3c-3.6 0-6.5-3.3-6.5-7.3s2.8-7.3 6.5-7.3c3.6 0 6.5 3.3 6.5 7.3s-2.9 7.3-6.5 7.3Zm23.5 0c-3.6 0-6.5-3.3-6.5-7.3s2.8-7.3 6.5-7.3c3.6 0 6.5 3.3 6.5 7.3s-2.9 7.3-6.5 7.3Z"/></svg>
       Continuer avec Discord
     </a>
-    <div class="auth-trust">🔒 Connexion sécurisée via Discord. Seul ton pseudo et avatar sont utilisés.</div>
-    <div id="auth-err" class="auth-err"></div>
+    <div class="auth-trust">🔒 Connexion sécurisée via Discord. Seuls ton pseudo et ton avatar sont utilisés.</div>
+    <a href="/leaderboard" class="auth-lb">🏆 Voir le classement</a>
   </div>
 </div>
 
 <!-- APP -->
 <div id="app" class="hidden">
   <nav class="nav">
-    <div class="nav-brand"><img src="/img/k13-logo.png" alt="K13" style="height:32px;width:32px;object-fit:contain;filter:invert(1) sepia(1) saturate(5) hue-rotate(190deg)" /></div>
-    <div class="nav-links">
-      <button class="nav-link active" data-page="dashboard">Accueil</button>
-      <button class="nav-link" data-page="challenges">Challenges</button>
-      <button class="nav-link" data-page="shop">Boutique</button>
+    <div class="nav-brand"><img src="/img/k13-logo.png" alt="K13" class="logo-img sm"/></div>
+    <div class="nav-links" role="tablist">
+      <button class="nav-link active" data-page="dashboard"><span class="nl-ico">🏠</span><span>Accueil</span></button>
+      <button class="nav-link" data-page="challenges"><span class="nl-ico">🎯</span><span>Défis</span><span class="nav-badge hidden" id="nav-badge"></span></button>
+      <button class="nav-link" data-page="shop"><span class="nl-ico">🛒</span><span>Boutique</span></button>
+      <a class="nav-link" href="/leaderboard"><span class="nl-ico">🏆</span><span>Classement</span></a>
     </div>
     <div class="nav-right">
-      <button class="btn-darkmode" id="btn-dark" onclick="toggleDark()" title="Mode sombre">🌙</button>
+      <button class="icon-btn" id="btn-dark" title="Mode sombre" aria-label="Mode sombre">🌙</button>
       <div class="pts-chip" id="nav-pts">0 pts</div>
-      <div class="nav-avatar" id="nav-avatar"><span id="nav-avatar-letter">?</span></div>
-      <button class="btn-logout-sm" onclick="logout()">Quitter</button>
+      <div class="nav-avatar" id="nav-avatar"><span>?</span></div>
+      <button class="icon-btn" id="btn-logout" title="Se déconnecter" aria-label="Se déconnecter">⎋</button>
     </div>
   </nav>
 
@@ -45,100 +58,102 @@
   <main class="page active" id="page-dashboard">
     <div class="hero">
       <div class="hero-left">
-        <div class="hero-avatar" id="hero-avatar-wrap"><span>?</span></div>
-        <div><div class="hero-name" id="hero-name">–</div><div class="hero-rank" id="hero-rank">–</div></div>
+        <div class="hero-avatar" id="hero-avatar"><span>?</span></div>
+        <div>
+          <div class="hero-name" id="hero-name">–</div>
+          <div class="hero-rank" id="hero-rank">–</div>
+        </div>
       </div>
-      <div class="hero-right"><div class="hero-pts" id="hero-pts">0</div><div class="hero-pts-lbl">points</div></div>
+      <div class="hero-right"><div class="hero-pts" id="hero-pts">0</div><div class="hero-pts-lbl">points disponibles</div></div>
+      <div class="hero-next" id="hero-next">
+        <div class="hero-next-row"><span id="hero-next-lbl">–</span><span id="hero-next-val"></span></div>
+        <div class="hero-next-track"><div class="hero-next-bar" id="hero-next-bar"></div></div>
+      </div>
     </div>
-    <div class="prog-card">
-      <div class="prog-header"><span class="prog-label">Progression globale</span><span class="prog-pct" id="prog-pct">0%</span></div>
-      <div class="prog-track"><div class="prog-bar" id="prog-bar" style="width:0%"></div></div>
-      <div class="prog-sub" id="prog-sub">0 / 0 challenges</div>
-    </div>
-    <div class="stats-grid">
-      <div class="stat"><div class="stat-icon">⭐</div><div class="stat-val" id="s-pts">0</div><div class="stat-lbl">Points</div></div>
-      <div class="stat"><div class="stat-icon">✅</div><div class="stat-val" id="s-done">0</div><div class="stat-lbl">Complétés</div></div>
-      <div class="stat"><div class="stat-icon">📺</div><div class="stat-val" id="s-watch">0h</div><div class="stat-lbl">Watch Twitch</div></div>
-      <div class="stat"><div class="stat-icon">💬</div><div class="stat-val" id="s-msg">0</div><div class="stat-lbl">Msgs Discord</div></div>
-    </div>
-    <div class="section-title">Comptes liés</div>
-    <div class="accounts-row" id="accounts-row"></div>
 
-    <!-- Live status (StreamElements track automatiquement) -->
     <div id="live-bar" class="live-bar hidden">
       <div class="live-dot"></div>
-      <div class="live-info"><strong>K13 est en live 🔴</strong> — StreamElements track ton visionnage automatiquement.</div>
+      <div class="live-info"><strong>K13 est en live 🔴</strong> <span id="live-text"></span></div>
+      <a class="btn-sm ghost" id="live-link" href="https://twitch.tv/k13esport" target="_blank" rel="noopener">Regarder</a>
+      <button class="btn-sm hidden" id="btn-live">▶ Démarrer le suivi</button>
     </div>
-    <div class="section-title">Challenges du jour <span class="badge-count" id="daily-count"></span></div>
+
+    <div class="stats-grid">
+      <div class="stat"><div class="stat-icon">✅</div><div class="stat-val" id="s-done">0</div><div class="stat-lbl">Défis en cours validés</div></div>
+      <div class="stat"><div class="stat-icon">⭐</div><div class="stat-val" id="s-life">0</div><div class="stat-lbl">Points gagnés au total</div></div>
+      <div class="stat"><div class="stat-icon">📺</div><div class="stat-val" id="s-watch">0</div><div class="stat-lbl">Visionnage Twitch</div></div>
+      <div class="stat"><div class="stat-icon">💬</div><div class="stat-val" id="s-msg">0</div><div class="stat-lbl">Messages Discord</div></div>
+    </div>
+
+    <div class="section-title">Comptes liés</div>
+    <div class="accounts-row" id="accounts-row"></div>
+    <form id="epic-form" class="epic-inline hidden">
+      <input class="input" id="epic-username" placeholder="Pseudo Epic Games" maxlength="64" required/>
+      <input class="input" id="epic-code" placeholder="Code créateur utilisé (optionnel)" maxlength="64"/>
+      <button class="btn-primary sm" type="submit">Enregistrer</button>
+      <button class="btn-ghost sm" type="button" data-action="epic-cancel">Annuler</button>
+    </form>
+
+    <div class="section-title">Défis du jour <span class="badge-count hidden" id="daily-count"></span><span class="section-sub" id="daily-reset"></span></div>
     <div class="ch-list" id="dash-daily"></div>
-    <button class="btn-see-all" onclick="showPage('challenges')">Voir tous les challenges →</button>
+    <button class="btn-see-all" data-page="challenges">Voir tous les défis →</button>
   </main>
 
   <!-- CHALLENGES -->
   <main class="page" id="page-challenges">
-    <h1 class="page-title">Challenges</h1>
-
-    <div class="cat-tabs" id="cat-tabs">
-      <button class="cat-tab active" data-cat="all">Tous</button>
-      <button class="cat-tab" data-cat="daily">🔄 Quotidiens</button>
-      <button class="cat-tab" data-cat="weekly">📅 Hebdo</button>
-      <button class="cat-tab" data-cat="permanent">♾️ Permanents</button>
-      <button class="cat-tab" data-cat="contest">🏆 Concours</button>
+    <div class="page-head">
+      <h1 class="page-title">Défis</h1>
+      <label class="switch"><input type="checkbox" id="hide-done"/><span>Masquer les défis terminés</span></label>
     </div>
-    <!-- Live tracker (visible uniquement si Twitch lié) -->
-    <div id="live-bar" class="live-bar hidden">
-      <div class="live-dot"></div>
-      <div class="live-info">
-        <span id="live-status-text">K13 en live — tracker actif</span>
-        <span id="live-timer-text" style="font-size:12px;color:var(--t2);margin-left:8px"></span>
-      </div>
-      <button class="btn-sm" id="btn-live" onclick="toggleLive()">▶ Démarrer</button>
-    </div>
-
+    <div class="cat-tabs" id="cat-tabs"></div>
     <div id="challenges-sections"></div>
   </main>
 
   <!-- SHOP -->
   <main class="page" id="page-shop">
-    <h1 class="page-title">Boutique</h1>
+    <div class="page-head">
+      <h1 class="page-title">Boutique</h1>
+      <div class="pts-chip lg" id="shop-pts">0 pts</div>
+    </div>
     <div class="shop-grid" id="shop-grid"></div>
-    <div class="section-title" style="margin-top:28px">Mes achats</div>
+    <div class="section-title mt">Mes codes promo</div>
+    <div id="codes-list" class="codes-list"></div>
+    <div class="section-title mt">Historique des achats</div>
     <div class="card"><table class="tbl">
-      <thead><tr><th>Article</th><th>Code / Résultat</th><th>Date</th></tr></thead>
+      <thead><tr><th>Article</th><th>Résultat</th><th>Date</th></tr></thead>
       <tbody id="orders-body"></tbody>
     </table></div>
   </main>
 </div>
 
-<!-- MODAL timer + screenshot -->
-<div id="modal-overlay" class="modal-overlay hidden" onclick="if(event.target===this)closeModal()">
-  <div class="modal">
+<!-- MODAL timer / screenshot / confirmation -->
+<div id="modal-overlay" class="modal-overlay hidden">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
     <div class="modal-icon" id="modal-icon">🔗</div>
     <div class="modal-title" id="modal-title">–</div>
     <div class="modal-desc" id="modal-desc"></div>
     <div id="modal-timer-wrap" class="modal-timer hidden">
       <svg width="80" height="80" viewBox="0 0 80 80">
-        <circle cx="40" cy="40" r="34" fill="none" stroke="#E5E7EB" stroke-width="6"/>
+        <circle cx="40" cy="40" r="34" fill="none" stroke="var(--border)" stroke-width="6"/>
         <circle id="timer-arc" cx="40" cy="40" r="34" fill="none" stroke="var(--blue)" stroke-width="6"
-          stroke-dasharray="213" stroke-dashoffset="0" stroke-linecap="round" transform="rotate(-90 40 40)"/>
+          stroke-dasharray="213.6" stroke-dashoffset="0" stroke-linecap="round" transform="rotate(-90 40 40)"/>
       </svg>
       <div class="timer-num" id="timer-num">–</div>
     </div>
-    <div id="modal-screen-section" class="hidden">
-      <input type="hidden" id="modal-screen-ch-id"/>
-      <label class="screen-upload-label" for="modal-screen-input">
-        <span id="screen-label-text">📂 Choisir une image</span>
-        <input type="file" id="modal-screen-input" accept="image/*" style="display:none"
-          onchange="el('screen-label-text').textContent='✓ '+this.files[0]?.name||'Fichier sélectionné'"/>
+    <form id="modal-screen-section" class="hidden">
+      <label class="screen-upload-label" id="screen-drop">
+        <img id="screen-preview" class="screen-preview hidden" alt=""/>
+        <span id="screen-label-text">📂 Choisir ou glisser une image</span>
+        <input type="file" id="modal-screen-input" accept="image/png,image/jpeg,image/gif,image/webp" hidden/>
       </label>
-      <button class="btn-upload-screen" id="btn-upload-screen" onclick="uploadScreenshot()">Envoyer le screenshot</button>
-    </div>
-    <button class="btn-modal-validate hidden" id="btn-modal-validate" onclick="validateRedirect()">✅ Valider</button>
-    <button class="btn-modal-close" onclick="closeModal()">Fermer</button>
+      <button class="btn-primary full" id="btn-upload-screen" type="submit">Envoyer le screenshot</button>
+    </form>
+    <button class="btn-primary full hidden" id="btn-modal-confirm"></button>
+    <button class="btn-ghost full" id="btn-modal-close">Fermer</button>
   </div>
 </div>
 
-<div class="toast" id="toast"></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
 <script src="/js/app.js"></script>
 </body>
 </html>
