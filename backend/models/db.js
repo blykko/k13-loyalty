@@ -11,13 +11,23 @@ let _db = null;
 function getDb() { if (_db) return _db; throw new Error('DB non initialisée'); }
 
 let _init = null;
+let _persistTimer = null;
 function initDb() {
   if (_init) return _init;
   _init = initSqlJs().then(SQL => {
     const db = fs.existsSync(DB_PATH) ? new SQL.Database(fs.readFileSync(DB_PATH)) : new SQL.Database();
     _db = db;
-    const persist = () => fs.writeFileSync(DB_PATH, Buffer.from(db.export()));
+    // Écriture disque groupée : sql.js garde la base en mémoire, on la sauvegarde
+    // au plus toutes les 500 ms au lieu de réécrire tout le fichier à chaque requête.
+    const persistNow = () => {
+      clearTimeout(_persistTimer); _persistTimer = null;
+      const tmp = DB_PATH + '.tmp';
+      fs.writeFileSync(tmp, Buffer.from(db.export()));
+      fs.renameSync(tmp, DB_PATH);
+    };
+    const persist = () => { if (!_persistTimer) _persistTimer = setTimeout(persistNow, 500); };
     _db._persist = persist;
+    _db._persistNow = persistNow;
     db.run('PRAGMA foreign_keys=ON');
     db.exec(`
       CREATE TABLE IF NOT EXISTS users (
@@ -114,6 +124,51 @@ function initDb() {
         invited_at  TEXT NOT NULL DEFAULT (datetime('now'))
       );
     `);
+
+    // ── Migrations ──────────────────────────────────────────────────────────────
+    const hasCol = (table, col) => (db.exec(`PRAGMA table_info(${table})`)[0]?.values || []).some(r => r[1] === col);
+
+    // Points cumulés (le rang ne doit pas baisser quand on dépense des points en boutique)
+    if (!hasCol('users', 'lifetime_points')) {
+      db.run('ALTER TABLE users ADD COLUMN lifetime_points INTEGER NOT NULL DEFAULT 0');
+      db.run(`UPDATE users SET lifetime_points = points + COALESCE((
+        SELECT SUM(i.cost_points) FROM shop_orders o JOIN shop_items i ON o.item_id=i.id WHERE o.user_id=users.id),0)`);
+      // Mêmes seuils que RANKS dans services/challenges.js
+      db.run("UPDATE users SET rank = CASE WHEN lifetime_points>=2000 THEN 'gold' WHEN lifetime_points>=1000 THEN 'silver' ELSE 'bronze' END");
+    }
+
+    // Origine des sessions de visionnage : 'tracker' (bouton) ou 'se' (StreamElements)
+    if (!hasCol('twitch_watch_sessions', 'source')) {
+      db.run("ALTER TABLE twitch_watch_sessions ADD COLUMN source TEXT NOT NULL DEFAULT 'tracker'");
+      // L'ancienne ligne 'se_sync' contenait le cumul total SE → devient une ligne de base "historique"
+      db.run(`UPDATE twitch_watch_sessions SET source='se', started_at='2000-01-01 00:00:00', ended_at='2000-01-01 00:00:00'
+              WHERE ended_at='se_sync'`);
+    }
+
+    // Dernier cumul StreamElements connu (les syncs n'ajoutent que la différence)
+    if (!hasCol('users', 'se_last_total')) {
+      db.run('ALTER TABLE users ADD COLUMN se_last_total INTEGER DEFAULT NULL');
+      db.run(`UPDATE users SET se_last_total=(SELECT SUM(seconds) FROM twitch_watch_sessions t WHERE t.user_id=users.id AND t.source='se')
+              WHERE EXISTS (SELECT 1 FROM twitch_watch_sessions t WHERE t.user_id=users.id AND t.source='se')`);
+    }
+
+    // Doublons user_challenges (même user / challenge / période) → on garde la ligne validée la plus ancienne
+    db.run(`DELETE FROM user_challenges WHERE id IN (
+      SELECT a.id FROM user_challenges a JOIN user_challenges b
+        ON a.user_id=b.user_id AND a.challenge_id=b.challenge_id AND IFNULL(a.period_key,'')=IFNULL(b.period_key,'')
+       AND (b.verified>a.verified OR (b.verified=a.verified AND b.id<a.id)))`);
+    db.run(`CREATE UNIQUE INDEX IF NOT EXISTS ux_user_challenge_period
+            ON user_challenges(user_id, challenge_id, IFNULL(period_key,''))`);
+    db.run('CREATE INDEX IF NOT EXISTS ix_activity_user_date ON discord_activity(user_id,date)');
+    db.run('CREATE INDEX IF NOT EXISTS ix_watch_user ON twitch_watch_sessions(user_id,started_at)');
+    db.run('CREATE INDEX IF NOT EXISTS ix_invites_inviter ON discord_invites(inviter_id,invited_at)');
+
+    // Les articles boutique par défaut étaient ré-insérés à chaque démarrage (pas de contrainte UNIQUE)
+    // → on fusionne les doublons (mêmes nom/type/coût) en gardant le plus ancien.
+    db.run(`UPDATE shop_orders SET item_id=(
+              SELECT MIN(k.id) FROM shop_items k, shop_items s
+              WHERE s.id=shop_orders.item_id AND k.name=s.name AND k.type=s.type AND k.cost_points=s.cost_points)`);
+    db.run(`DELETE FROM shop_items WHERE id NOT IN (SELECT MIN(id) FROM shop_items GROUP BY name,type,cost_points)`);
     persist();
 
     // Challenges par défaut
@@ -142,8 +197,8 @@ function initDb() {
     const ins = db.prepare(`INSERT OR IGNORE INTO challenges (platform,slug,name,description,points,type,required_value,repeat_seconds,redirect_url,redirect_delay,category,extra) VALUES (?,?,?,?,?,?,?,?,?,?,?,'{}') `);
     for (const r of defaults) ins.run(r);
 
-    // Boutique
-    [
+    // Boutique (uniquement à la première initialisation)
+    if (!db.exec('SELECT COUNT(*) FROM shop_items')[0].values[0][0]) [
       ['Code promo -5%',  'Code de réduction 5% sur la boutique K13. Valable 30 jours.',  'promo_code',  500, -1, '{"discount":5,"tier":"bronze"}'],
       ['Code promo -10%', 'Code de réduction 10% sur la boutique K13. Valable 30 jours.', 'promo_code', 1000, -1, '{"discount":10,"tier":"silver"}'],
       ['Code promo -20%', 'Code de réduction 20% sur la boutique K13. Valable 30 jours.', 'promo_code', 2000, -1, '{"discount":20,"tier":"gold"}'],
@@ -165,4 +220,6 @@ function initDb() {
 function dbGet(sql,p=[]){const r=getDb().exec(sql,p);if(!r.length||!r[0].values.length)return undefined;return Object.fromEntries(r[0].columns.map((c,i)=>[c,r[0].values[0][i]]))}
 function dbAll(sql,p=[]){const r=getDb().exec(sql,p);if(!r.length)return[];return r[0].values.map(row=>Object.fromEntries(r[0].columns.map((c,i)=>[c,row[i]])))}
 function dbRun(sql,p=[]){getDb().run(sql,p);const m=getDb().exec('SELECT last_insert_rowid() AS id,changes() AS ch');getDb()._persist();return m.length?{lastInsertRowid:m[0].values[0][0],changes:m[0].values[0][1]}:{lastInsertRowid:0,changes:0}}
-module.exports={initDb,dbGet,dbAll,dbRun};
+// Force l'écriture immédiate (arrêt du serveur)
+function dbFlush(){ if(_db) _db._persistNow(); }
+module.exports={initDb,dbGet,dbAll,dbRun,dbFlush};

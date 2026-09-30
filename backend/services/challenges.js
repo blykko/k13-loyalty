@@ -2,340 +2,325 @@
 const crypto = require('crypto');
 const { dbGet, dbRun, dbAll } = require('../models/db');
 const discord = require('./discord');
-// Note: discord.getTotalInvites disponible si défini
 const twitch  = require('./twitch');
 const se      = require('./streamelements');
+const T       = require('./time');
+
+// ── Rangs ──────────────────────────────────────────────────────────────────────
+// Le rang dépend des points CUMULÉS (lifetime_points) : dépenser ses points en
+// boutique ne fait pas redescendre de palier.
+const RANKS = [
+  { id: 'bronze', min: 0 },
+  { id: 'silver', min: 1000 },
+  { id: 'gold',   min: 2000 },
+];
+function rankFor(lifetime) {
+  let r = RANKS[0];
+  for (const x of RANKS) if (lifetime >= x.min) r = x;
+  return r.id;
+}
+function nextRank(lifetime) {
+  const n = RANKS.find(x => x.min > lifetime);
+  return n ? { id: n.id, min: n.min, remaining: n.min - lifetime } : null;
+}
 
 function updateRank(userId) {
-  const u = dbGet('SELECT points FROM users WHERE id=?', [userId]);
+  const u = dbGet('SELECT lifetime_points, rank FROM users WHERE id=?', [userId]);
   if (!u) return;
-  const rank = u.points >= 2000 ? 'gold' : u.points >= 1000 ? 'silver' : 'bronze';
+  const rank = rankFor(u.lifetime_points);
+  if (rank === u.rank) return;
   dbRun('UPDATE users SET rank=? WHERE id=?', [rank, userId]);
   discord.syncRoleForUser(userId).catch(() => {});
 }
 
-// Formate les secondes en texte lisible (30 min, 1h, 1h 30min, etc.)
+function addPoints(userId, pts) {
+  if (!pts || pts <= 0) return;
+  dbRun("UPDATE users SET points=points+?, lifetime_points=lifetime_points+?, last_seen=datetime('now') WHERE id=?", [pts, pts, userId]);
+  updateRank(userId);
+}
+function removePoints(userId, pts) {
+  if (!pts || pts <= 0) return;
+  dbRun('UPDATE users SET points=MAX(0,points-?), lifetime_points=MAX(0,lifetime_points-?) WHERE id=?', [pts, pts, userId]);
+  updateRank(userId);
+}
+
+// Formate les secondes en texte lisible (30 min, 1h, 1h 30min…)
 function fmtSecs(s) {
-  if (!s || s === 0) return '0 min';
+  if (!s) return '0 min';
   const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
   if (h === 0) return `${m} min`;
   if (m === 0) return `${h}h`;
   return `${h}h ${m}min`;
 }
 
-function addPoints(userId, pts) {
-  if (!pts || pts <= 0) return;
-  dbRun('UPDATE users SET points=points+?,last_seen=datetime("now") WHERE id=?', [pts, userId]);
-  updateRank(userId);
-}
-function removePoints(userId, pts) {
-  dbRun('UPDATE users SET points=MAX(0,points-?) WHERE id=?', [pts, userId]);
-  updateRank(userId);
-}
-function getPeriodKey(challenge) {
-  if (!challenge.repeat_seconds) return null;
-  const now = new Date();
-  // Quotidien : clé = date du jour (YYYY-MM-DD heure Paris)
-  if (challenge.repeat_seconds === 86400) {
-    // Reset à minuit heure de Paris
-    const paris = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Paris' }));
-    return `day-${paris.getFullYear()}-${String(paris.getMonth()+1).padStart(2,'0')}-${String(paris.getDate()).padStart(2,'0')}`;
-  }
-  // Hebdomadaire : clé = année + numéro de semaine ISO (lundi-dimanche)
-  if (challenge.repeat_seconds === 604800) {
-    const paris = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Paris' }));
-    const dayOfWeek = paris.getDay() || 7; // 1=lundi..7=dimanche
-    const mondayDate = new Date(paris); mondayDate.setDate(paris.getDate() - dayOfWeek + 1);
-    return `week-${mondayDate.getFullYear()}-${String(mondayDate.getMonth()+1).padStart(2,'0')}-${String(mondayDate.getDate()).padStart(2,'0')}`;
-  }
-  // Mensuel : clé = YYYY-MM
-  if (challenge.repeat_seconds === 2592000) {
-    const paris = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Paris' }));
-    return `month-${paris.getFullYear()}-${String(paris.getMonth()+1).padStart(2,'0')}`;
-  }
-  // Autres : période glissante
-  return `period-${Math.floor(Math.floor(Date.now()/1000) / challenge.repeat_seconds)}`;
+// ── Entrées user_challenges ────────────────────────────────────────────────────
+function getPeriodKey(ch) { return T.periodKey(ch.repeat_seconds); }
+
+function getEntry(userId, challengeId, periodKey) {
+  return dbGet(
+    "SELECT * FROM user_challenges WHERE user_id=? AND challenge_id=? AND IFNULL(period_key,'')=IFNULL(?,'')",
+    [userId, challengeId, periodKey]);
 }
 function isAlreadyDone(userId, challengeId, periodKey) {
-  if (periodKey) return !!dbGet('SELECT id FROM user_challenges WHERE user_id=? AND challenge_id=? AND period_key=?',[userId,challengeId,periodKey]);
-  return !!dbGet('SELECT id FROM user_challenges WHERE user_id=? AND challenge_id=?',[userId,challengeId]);
+  return getEntry(userId, challengeId, periodKey)?.verified === 1;
 }
-function markDone(userId, challengeId, verified=1, periodKey=null, screenshotPath=null) {
+function markDone(userId, challengeId, verified = 1, periodKey = null, screenshotPath = null) {
   dbRun('INSERT OR IGNORE INTO user_challenges (user_id,challenge_id,verified,period_key,screenshot_path) VALUES (?,?,?,?,?)',
-    [userId,challengeId,verified,periodKey,screenshotPath]);
+    [userId, challengeId, verified, periodKey, screenshotPath]);
 }
 
-// ── Initier une redirection (timer) ───────────────────────────────────────────
+// Valide un challenge pour la période courante et attribue les points UNE seule fois.
+// Retourne true si les points ont été attribués.
+function completeChallenge(userId, ch, periodKey = getPeriodKey(ch), note = null) {
+  const entry = getEntry(userId, ch.id, periodKey);
+  if (entry?.verified === 1) return false;
+  if (entry) {
+    dbRun("UPDATE user_challenges SET verified=1, completed_at=datetime('now'), admin_note=COALESCE(?,admin_note) WHERE id=?", [note, entry.id]);
+  } else {
+    dbRun('INSERT INTO user_challenges (user_id,challenge_id,verified,period_key,admin_note) VALUES (?,?,1,?,?)',
+      [userId, ch.id, periodKey, note]);
+  }
+  addPoints(userId, ch.points);
+  return true;
+}
+
+// ── Progression des challenges automatiques ────────────────────────────────────
+const AUTO_TYPES = ['messages', 'vocal', 'invite', 'watchtime'];
+
+function required(ch) {
+  // Un challenge d'invitation sans seuil = 1 invitation
+  if (ch.type === 'invite') return Math.max(1, ch.required_value || 0);
+  return ch.required_value || 0;
+}
+
+// Progression sur la période courante du challenge (ou depuis toujours s'il est permanent)
+function getProgress(userId, ch) {
+  const start = T.periodStart(ch.repeat_seconds);
+  const req = required(ch);
+  if (ch.type === 'messages' || ch.type === 'vocal') {
+    const col = ch.type === 'messages' ? 'messages' : 'vocal_seconds';
+    const from = start ? T.parisDate(start) : '0000-00-00';
+    const cur = dbGet(`SELECT COALESCE(SUM(${col}),0) AS t FROM discord_activity WHERE user_id=? AND date>=?`, [userId, from])?.t || 0;
+    return { current: cur, required: req };
+  }
+  if (ch.type === 'invite') {
+    return { current: discord.getInviteCount(userId, start ? T.toSql(start) : null), required: req };
+  }
+  if (ch.type === 'watchtime') {
+    const from = start ? T.toSql(start) : '0000-00-00';
+    const cur = dbGet('SELECT COALESCE(SUM(seconds),0) AS t FROM twitch_watch_sessions WHERE user_id=? AND started_at>=?', [userId, from])?.t || 0;
+    return { current: cur, required: req };
+  }
+  return null;
+}
+
+// Valide automatiquement les challenges atteints (appelé après activité Discord, sync SE…)
+// opts.types  : limite aux types donnés
+// opts.inGuild: l'utilisateur est confirmé membre du serveur → valide aussi "join"
+function autoCheck(userId, opts = {}) {
+  const types = opts.types || AUTO_TYPES;
+  const list = dbAll('SELECT * FROM challenges WHERE active=1');
+  let awarded = 0;
+  for (const ch of list) {
+    if (ch.type === 'join') {
+      if (opts.inGuild && completeChallenge(userId, ch)) awarded += ch.points;
+      continue;
+    }
+    if (!types.includes(ch.type)) continue;
+    const pk = getPeriodKey(ch);
+    if (isAlreadyDone(userId, ch.id, pk)) continue;
+    const p = getProgress(userId, ch);
+    if (p && p.required > 0 && p.current >= p.required && completeChallenge(userId, ch, pk)) {
+      awarded += ch.points;
+      console.log(`[Challenges] "${ch.name}" auto-validé pour user ${userId} (+${ch.points} pts)`);
+    }
+  }
+  return awarded;
+}
+
+function needsAdminReview(ch) {
+  return ch.slug === 'twitch-sub' || ch.platform === 'epic';
+}
+
+// ── Redirection + timer ────────────────────────────────────────────────────────
 function initiateRedirect(userId, challengeId) {
   const token = crypto.randomBytes(16).toString('hex');
-  dbRun('INSERT INTO pending_redirects (user_id,challenge_id,token) VALUES (?,?,?)', [userId,challengeId,token]);
+  // Nettoie les anciens tokens non utilisés de ce user pour ce challenge
+  dbRun('DELETE FROM pending_redirects WHERE user_id=? AND challenge_id=? AND validated_at IS NULL', [userId, challengeId]);
+  dbRun('INSERT INTO pending_redirects (user_id,challenge_id,token) VALUES (?,?,?)', [userId, challengeId, token]);
   return token;
 }
 
-// Validation après le timer (appelé par le frontend)
 function validateRedirectTimer(userId, token) {
   const p = dbGet('SELECT * FROM pending_redirects WHERE token=? AND user_id=? AND validated_at IS NULL', [token, userId]);
   if (!p) return { ok: false, message: 'Token invalide ou déjà utilisé.' };
-  const ch = dbGet('SELECT * FROM challenges WHERE id=?', [p.challenge_id]);
+  const ch = dbGet('SELECT * FROM challenges WHERE id=? AND active=1', [p.challenge_id]);
   if (!ch) return { ok: false, message: 'Challenge introuvable.' };
-  const elapsed = Math.floor((Date.now() - new Date(p.created_at).getTime()) / 1000);
-  if (elapsed < (ch.redirect_delay - 3))
-    return { ok: false, message: `Attends encore ${ch.redirect_delay - elapsed} secondes.` };
-  dbRun('UPDATE pending_redirects SET validated_at=datetime("now") WHERE token=?', [token]);
-  // Timer validé → points attribués directement, pas de screen requis
-  const periodKey = getPeriodKey(ch);
-  if (isAlreadyDone(userId, ch.id, periodKey))
-    return { ok: false, message: 'Déjà complété !' };
-  markDone(userId, ch.id, 1, periodKey);
-  addPoints(userId, ch.points);
+  const delay = ch.redirect_delay || 20;
+  const elapsed = Math.floor((Date.now() - T.fromSql(p.created_at).getTime()) / 1000);
+  if (elapsed < delay - 3)
+    return { ok: false, message: `Attends encore ${delay - elapsed} secondes.` };
+  dbRun("UPDATE pending_redirects SET validated_at=datetime('now') WHERE id=?", [p.id]);
+  if (!completeChallenge(userId, ch)) return { ok: false, message: 'Déjà complété !' };
   return { ok: true, message: `+${ch.points} pts ! Challenge "${ch.name}" validé ✅`, points: ch.points };
 }
 
+// ── Screenshot ─────────────────────────────────────────────────────────────────
+// Retourne { ok, ... , keepFile } — keepFile=false si le fichier doit être supprimé
+function submitScreenshot(userId, challengeId, filePath) {
+  const ch = dbGet('SELECT * FROM challenges WHERE id=? AND active=1', [challengeId]);
+  if (!ch || ch.type !== 'screen')
+    return { ok: false, keepFile: false, message: 'Ce challenge ne se valide pas par screenshot.' };
+  const pk = getPeriodKey(ch);
+  const entry = getEntry(userId, ch.id, pk);
+  if (entry?.verified === 1)
+    return { ok: false, keepFile: false, message: pk ? 'Déjà fait pour cette période !' : 'Déjà complété !' };
+
+  if (!needsAdminReview(ch)) {
+    // Validation automatique à la réception du screen (les points ne sont donnés qu'une fois)
+    completeChallenge(userId, ch, pk);
+    return { ok: true, keepFile: false, message: `✅ Screenshot reçu ! +${ch.points} pts attribués.` };
+  }
+
+  // Validation admin : remplace un éventuel ancien screen en attente
+  const old = entry?.screenshot_path;
+  if (entry) {
+    dbRun("UPDATE user_challenges SET screenshot_path=?, completed_at=datetime('now') WHERE id=?", [filePath, entry.id]);
+  } else {
+    markDone(userId, ch.id, 0, pk, filePath);
+  }
+  return { ok: true, pending: true, keepFile: true, replaced: old,
+    message: '📸 Screenshot envoyé ! L\'admin K13 validera sous 24h.' };
+}
+
+// ── Vérification manuelle (bouton "Valider") ───────────────────────────────────
 async function verifyChallenge(userId, slug) {
   const user = dbGet('SELECT * FROM users WHERE id=?', [userId]);
   const ch   = dbGet('SELECT * FROM challenges WHERE slug=? AND active=1', [slug]);
-  if (!ch) return { ok: false, message: 'Challenge introuvable.' };
-  const periodKey = getPeriodKey(ch);
-  // Pour les challenges screen : si déjà verified=1, c'est terminé. Si verified=0, on permet de renvoyer un screen.
-  const existingEntry = periodKey
-    ? dbGet('SELECT * FROM user_challenges WHERE user_id=? AND challenge_id=? AND period_key=?',[userId,ch.id,periodKey])
-    : dbGet('SELECT * FROM user_challenges WHERE user_id=? AND challenge_id=?',[userId,ch.id]);
-  if (existingEntry?.verified === 1)
-    return { ok: false, message: periodKey ? 'Déjà fait pour cette période !' : 'Déjà complété !' };
-  // Si pending (verified=0) et type screen, permet de renvoyer un screen
-  if (existingEntry?.verified === 0 && ch.type === 'screen') {
-    return { ok: true, screen: true, needsScreen: true, challengeId: ch.id,
-      requireAdmin: ch.slug === 'twitch-sub' || ch.platform === 'epic',
-      message: '📸 Un screen est déjà en attente. Tu peux en renvoyer un.' };
-  }
-  if (existingEntry?.verified === 0 && ch.type !== 'screen')
-    return { ok: false, message: periodKey ? 'Déjà soumis pour cette période.' : 'Déjà soumis, en attente de validation.' };
+  if (!user || !ch) return { ok: false, message: 'Challenge introuvable.' };
+  const pk = getPeriodKey(ch);
+  const entry = getEntry(userId, ch.id, pk);
+  if (entry?.verified === 1)
+    return { ok: false, message: pk ? 'Déjà fait pour cette période !' : 'Déjà complété !' };
 
-  // ── Redirection + timer ────────────────────────────────────────────────────
-  if (ch.type === 'redirect' && ch.redirect_url) {
+  // ── Screenshot : le client ouvre la fenêtre d'upload ─────────────────────
+  if (ch.type === 'screen') {
+    return { ok: false, screen: true, needsScreen: true, challengeId: ch.id, challengeName: ch.name,
+      requireAdmin: needsAdminReview(ch), openUrl: ch.redirect_url || null,
+      message: entry?.screenshot_path ? '📸 Un screen est déjà en attente. Tu peux en renvoyer un.' : '📸 Envoie un screenshot pour valider ce défi.' };
+  }
+
+  // ── Redirection + timer ─────────────────────────────────────────────────
+  if (ch.type === 'redirect') {
+    if (!ch.redirect_url) return { ok: false, message: 'Lien manquant, contacte un admin.' };
     const token = initiateRedirect(userId, ch.id);
     return { ok: false, redirect: true, url: ch.redirect_url, token,
       delay: ch.redirect_delay || 20, challengeName: ch.name, challengeId: ch.id };
   }
 
-  // ── Twitch : follow (API automatique) ────────────────────────────────────
-  if (ch.slug === 'twitch-follow') {
+  // ── Twitch follow (API) ─────────────────────────────────────────────────
+  if (ch.type === 'follow' || ch.slug === 'twitch-follow') {
     if (!user.twitch_id || !user.twitch_token)
       return { ok: false, message: 'Lie ton compte Twitch.', needsLink: 'twitch' };
     try {
       const follows = await twitch.checkFollow(userId);
-      if (!follows) return { ok: false, message: 'Tu ne suis pas encore la chaîne Twitch K13. Suis-la puis réessaie.', openUrl: `https://www.twitch.tv/${process.env.TWITCH_CHANNEL_LOGIN||'k13esport'}` };
+      if (!follows) return { ok: false, message: 'Tu ne suis pas encore la chaîne Twitch K13. Suis-la puis réessaie.',
+        openUrl: ch.redirect_url || `https://www.twitch.tv/${process.env.TWITCH_CHANNEL_LOGIN || 'k13esport'}` };
     } catch (e) {
       return { ok: false, message: 'Erreur Twitch : ' + e.message };
     }
-    markDone(userId, ch.id, 1, periodKey);
-    addPoints(userId, ch.points);
+    completeChallenge(userId, ch, pk);
     return { ok: true, message: `+${ch.points} pts ! Follow Twitch vérifié ✅`, points: ch.points };
   }
 
-  // ── Screen : twitch-sub + epic = admin requis / autres = auto-validé ──────
-  if (ch.type === 'screen') {
-    const needsAdmin = ch.slug === 'twitch-sub' || ch.platform === 'epic';
-    markDone(userId, ch.id, 0, periodKey);
-    return { ok: false, screen: true, needsScreen: true,
-      challengeId: ch.id, challengeName: ch.name,
-      requireAdmin: needsAdmin,
-      message: '📸 Envoie un screenshot pour valider ce défi.' };
-  }
-
-  // ── Discord : join ─────────────────────────────────────────────────────────
+  // ── Discord : rejoindre le serveur ──────────────────────────────────────
   if (ch.type === 'join') {
     if (!user.discord_id) return { ok: false, message: 'Connecte ton Discord.', needsLink: 'discord' };
     const ok = await discord.checkGuildMember(user.discord_id).catch(() => false);
     if (!ok) return { ok: false, message: 'Tu n\'es pas encore dans le serveur Discord K13.' };
-    markDone(userId, ch.id, 1, periodKey);
-    addPoints(userId, ch.points);
+    completeChallenge(userId, ch, pk);
     return { ok: true, message: `+${ch.points} pts ! Bienvenue sur le Discord K13 🎉`, points: ch.points };
   }
 
-  // ── Discord : invitations ──────────────────────────────────────────────────
-  if (ch.type === 'invite') {
-    if (!user.discord_id) return { ok: false, message: 'Connecte ton Discord.', needsLink: 'discord' };
-    const count = discord.getInviteCount(userId);
-    if (count < ch.required_value)
-      return { ok: false, message: `Tu as invité ${count} personne(s). Objectif : ${ch.required_value}.`,
-        progress: { current: count, required: ch.required_value } };
-    markDone(userId, ch.id, 1, periodKey);
-    addPoints(userId, ch.points);
-    return { ok: true, message: `+${ch.points} pts ! Invitation Discord validée ✅`, points: ch.points };
-  }
-
-  // ── Discord : messages ─────────────────────────────────────────────────────
-  if (ch.type === 'messages') {
-    if (!user.discord_id) return { ok: false, message: 'Connecte ton Discord.', needsLink: 'discord' };
-    // Utilise la date Paris pour les challenges quotidiens
-    let from = '2000-01-01';
-    if (ch.repeat_seconds === 86400) {
-      const paris = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/Paris' }));
-      from = `${paris.getFullYear()}-${String(paris.getMonth()+1).padStart(2,'0')}-${String(paris.getDate()).padStart(2,'0')}`;
-    } else if (ch.repeat_seconds) {
-      from = new Date(Date.now()-ch.repeat_seconds*1000).toISOString().split('T')[0];
+  // ── Challenges à seuil (messages, vocal, invitations, watchtime) ────────
+  if (AUTO_TYPES.includes(ch.type)) {
+    if (ch.type === 'watchtime') {
+      if (!user.twitch_id) return { ok: false, message: 'Lie ton compte Twitch d\'abord.', needsLink: 'twitch' };
+      await se.syncWatchtimeForUser(userId, { force: true }).catch(() => {});
+    } else if (!user.discord_id) {
+      return { ok: false, message: 'Connecte ton Discord.', needsLink: 'discord' };
     }
-    const count = (dbGet('SELECT COALESCE(SUM(messages),0) AS c FROM discord_activity WHERE user_id=? AND date>=?',[userId,from])?.c)||0;
-    if (count < ch.required_value)
-      return { ok: false, message: `${count} messages envoyés. Objectif : ${ch.required_value}.`,
-        progress: { current: count, required: ch.required_value } };
-    markDone(userId, ch.id, 1, periodKey);
-    addPoints(userId, ch.points);
-    return { ok: true, message: `+${ch.points} pts ! Objectif messages Discord atteint ✅`, points: ch.points };
-  }
-
-  // ── Discord : vocal ────────────────────────────────────────────────────────
-  if (ch.type === 'vocal') {
-    if (!user.discord_id) return { ok: false, message: 'Connecte ton Discord.', needsLink: 'discord' };
-    let from = '2000-01-01';
-    if (ch.repeat_seconds === 86400) {
-      const paris = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/Paris' }));
-      from = `${paris.getFullYear()}-${String(paris.getMonth()+1).padStart(2,'0')}-${String(paris.getDate()).padStart(2,'0')}`;
-    } else if (ch.repeat_seconds) {
-      from = new Date(Date.now()-ch.repeat_seconds*1000).toISOString().split('T')[0];
+    const p = getProgress(userId, ch);
+    if (p.current < p.required) {
+      const isTime = ch.type === 'watchtime' || ch.type === 'vocal';
+      const cur = isTime ? fmtSecs(p.current) : p.current;
+      const left = isTime ? fmtSecs(p.required - p.current) : p.required - p.current;
+      const label = { messages: 'messages envoyés', vocal: 'en vocal', invite: 'invitation(s)', watchtime: 'regardés' }[ch.type];
+      return { ok: false, message: `${cur} ${label}. Encore ${left}.`, progress: p };
     }
-    const secs = (dbGet('SELECT COALESCE(SUM(vocal_seconds),0) AS c FROM discord_activity WHERE user_id=? AND date>=?',[userId,from])?.c)||0;
-    if (secs < ch.required_value) {
-      return { ok: false, message: `${fmtSecs(secs)} en vocal. Encore ${fmtSecs(ch.required_value - secs)}.`,
-        progress: { current: secs, required: ch.required_value } };
-    }
-    markDone(userId, ch.id, 1, periodKey);
-    addPoints(userId, ch.points);
-    return { ok: true, message: `+${ch.points} pts ! Temps vocal validé ✅`, points: ch.points };
-  }
-
-  // ── Twitch : watchtime ─────────────────────────────────────────────────────
-  if (ch.type === 'watchtime') {
-    if (!user.twitch_id) return { ok: false, message: 'Lie ton compte Twitch d\'abord.', needsLink: 'twitch' };
-
-    // Si StreamElements est configuré, sync automatiquement avant de vérifier
-    if (se.isConfigured()) {
-      await se.syncWatchtimeForUser(userId).catch(() => {});
-    }
-
-    // Calcule le from selon la période
-    let from = '2000-01-01T00:00:00.000Z';
-    if (ch.repeat_seconds === 86400) {
-      const paris = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/Paris' }));
-      paris.setHours(0,0,0,0);
-      from = paris.toISOString();
-    } else if (ch.repeat_seconds === 604800) {
-      const paris = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/Paris' }));
-      const dow = paris.getDay() || 7;
-      paris.setDate(paris.getDate() - dow + 1); paris.setHours(0,0,0,0);
-      from = paris.toISOString();
-    } else if (ch.repeat_seconds) {
-      from = new Date(Date.now()-ch.repeat_seconds*1000).toISOString();
-    }
-
-    // Pour les challenges permanents (pas de période), inclut aussi la session SE sync
-    const secs = (dbGet(
-      'SELECT COALESCE(SUM(seconds),0) AS c FROM twitch_watch_sessions WHERE user_id=? AND (started_at>=? OR ended_at=?)',
-      [userId, from, 'se_sync']
-    )?.c)||0;
-
-    if (secs < ch.required_value) {
-      const seHint = se.isConfigured() ? ' (sync SE toutes les 5-10 min)' : ' — utilise le tracker si K13 est en live';
-      return { ok: false, message: `${fmtSecs(secs)} regardés. Encore ${fmtSecs(ch.required_value - secs)}.${seHint}`,
-        progress: { current: secs, required: ch.required_value } };
-    }
-    markDone(userId, ch.id, 1, periodKey);
-    addPoints(userId, ch.points);
-    return { ok: true, message: `+${ch.points} pts ! Watch time validé ✅`, points: ch.points };
-  }
-
-  // ── Discord : invite ──────────────────────────────────────────────────────
-  if (ch.type === 'invite') {
-    if (!user.discord_id) return { ok: false, message: 'Connecte ton Discord.', needsLink: 'discord' };
-    const totalInvites = discord.getTotalInvites ? discord.getTotalInvites(userId) : 0;
-    const required = ch.required_value || 1;
-    if (totalInvites < required) {
-      return { ok: false,
-        message: `Tu as invité ${totalInvites} personne${totalInvites>1?'s':''}. Objectif : ${required}.`,
-        progress: { current: totalInvites, required } };
-    }
-    markDone(userId, ch.id, 1, periodKey);
-    addPoints(userId, ch.points);
-    return { ok: true, message: `+${ch.points} pts ! Invitation Discord validée ✅`, points: ch.points };
+    completeChallenge(userId, ch, pk);
+    return { ok: true, message: `+${ch.points} pts ! "${ch.name}" validé ✅`, points: ch.points };
   }
 
   return { ok: false, message: `Type de challenge "${ch.type}" non géré. Contacte l'admin.` };
 }
 
+// ── Données du tableau de bord ─────────────────────────────────────────────────
 function getUserStats(userId) {
   const user = dbGet('SELECT * FROM users WHERE id=?', [userId]);
+  if (!user) return null;
   const challenges = dbAll('SELECT * FROM challenges WHERE active=1 ORDER BY category,platform,points');
-  const completed  = dbAll('SELECT * FROM user_challenges WHERE user_id=? ORDER BY completed_at DESC', [userId]);
-  const doneMap = {};
-  for (const c of completed) {
-    // Priorité aux entrées verified=1 sur les non-verified
-    if (!doneMap[c.challenge_id] || (c.verified === 1 && doneMap[c.challenge_id].verified === 0)) {
-      doneMap[c.challenge_id] = c;
-    }
-  }
+  const entries = dbAll('SELECT challenge_id, period_key, verified, screenshot_path FROM user_challenges WHERE user_id=?', [userId]);
+  const byKey = new Map(entries.map(e => [`${e.challenge_id}|${e.period_key || ''}`, e]));
 
-  const watchSec  = (dbGet('SELECT COALESCE(SUM(seconds),0) AS t FROM twitch_watch_sessions WHERE user_id=?',[userId])?.t)||0;
-  const discMsgs  = (dbGet('SELECT COALESCE(SUM(messages),0) AS t FROM discord_activity WHERE user_id=?',[userId])?.t)||0;
-  const discVocal = (dbGet('SELECT COALESCE(SUM(vocal_seconds),0) AS t FROM discord_activity WHERE user_id=?',[userId])?.t)||0;
-  const codes     = dbAll('SELECT * FROM promo_codes WHERE user_id=? ORDER BY created_at DESC',[userId]);
-  const orders    = dbAll('SELECT o.*,i.name AS item_name FROM shop_orders o JOIN shop_items i ON o.item_id=i.id WHERE o.user_id=? ORDER BY o.created_at DESC',[userId]);
-  const done      = challenges.filter(c => doneMap[c.id]?.verified===1).length;
+  const list = challenges.map(c => {
+    const pk = getPeriodKey(c);
+    const e = byKey.get(`${c.id}|${pk || ''}`);
+    const completed = e?.verified === 1;
+    return {
+      id: c.id, slug: c.slug, platform: c.platform, name: c.name, description: c.description,
+      points: c.points, type: c.type, category: c.category, repeat_seconds: c.repeat_seconds,
+      redirect_url: c.redirect_url, redirect_delay: c.redirect_delay,
+      completed,
+      pending: e?.verified === 0,
+      screenshotPending: e?.verified === 0 && !!e.screenshot_path,
+      progress: completed ? null : getProgress(userId, c),
+      resetsAt: pk ? nextPeriodIso(c.repeat_seconds) : null,
+    };
+  });
+  const done = list.filter(c => c.completed).length;
 
   return {
-    user: { id:user.id, username:user.username, points:user.points, rank:user.rank,
-      discord_id:user.discord_id, discord_username:user.discord_username, discord_avatar:user.discord_avatar,
-      twitch_login:user.twitch_login, twitch_id:user.twitch_id, epic_username:user.epic_username },
-    challenges: challenges.map(c => {
-      const entry = doneMap[c.id];
-      const periodKey = getPeriodKey(c);
-      const periodEntry = periodKey
-        ? dbGet('SELECT * FROM user_challenges WHERE user_id=? AND challenge_id=? AND period_key=? ORDER BY completed_at DESC',[userId,c.id,periodKey])
-        : null;
-      const eff = periodKey ? periodEntry : entry;
-      let progress = null;
-      if (c.type==='watchtime') {
-        let wtFrom = '2000-01-01T00:00:00.000Z';
-        if (c.repeat_seconds === 86400) {
-          const p=new Date(new Date().toLocaleString('en-US',{timeZone:'Europe/Paris'})); p.setHours(0,0,0,0); wtFrom=p.toISOString();
-        } else if (c.repeat_seconds === 604800) {
-          const p=new Date(new Date().toLocaleString('en-US',{timeZone:'Europe/Paris'})); const dow=p.getDay()||7; p.setDate(p.getDate()-dow+1); p.setHours(0,0,0,0); wtFrom=p.toISOString();
-        } else if (c.repeat_seconds) {
-          wtFrom=new Date(Date.now()-c.repeat_seconds*1000).toISOString();
-        }
-        // Pour les permanents, inclut aussi la session SE (se_sync)
-        const wtQuery = c.repeat_seconds
-          ? 'SELECT COALESCE(SUM(seconds),0) AS t FROM twitch_watch_sessions WHERE user_id=? AND started_at>=? AND ended_at!=?'
-          : 'SELECT COALESCE(SUM(seconds),0) AS t FROM twitch_watch_sessions WHERE user_id=?';
-        const wtParams = c.repeat_seconds ? [userId, wtFrom, 'se_sync'] : [userId];
-        const wtTotal = c.repeat_seconds
-          ? (dbGet(wtQuery, wtParams)?.t||0)
-          : (dbGet('SELECT COALESCE(SUM(seconds),0) AS t FROM twitch_watch_sessions WHERE user_id=?',[userId])?.t||0);
-        progress={current: wtTotal, required: c.required_value};
-      }
-      if (c.type==='invite') {
-        const inv = discord.getInviteCount(userId, c.repeat_seconds);
-        progress={current: inv, required: c.required_value||1};
-      }
-      if (c.type==='invite')    { progress={current:discord.getInviteCount(userId),required:c.required_value}; }
-      if (c.type==='messages')  {
-        let from='2000-01-01';
-        if(c.repeat_seconds===86400){const p=new Date(new Date().toLocaleString('en-US',{timeZone:'Europe/Paris'}));from=`${p.getFullYear()}-${String(p.getMonth()+1).padStart(2,'0')}-${String(p.getDate()).padStart(2,'0')}`;}
-        else if(c.repeat_seconds){from=new Date(Date.now()-c.repeat_seconds*1000).toISOString().split('T')[0];}
-        progress={current:(dbGet('SELECT COALESCE(SUM(messages),0) AS t FROM discord_activity WHERE user_id=? AND date>=?',[userId,from])?.t)||0,required:c.required_value};
-      }
-      if (c.type==='vocal')     {
-        let from='2000-01-01';
-        if(c.repeat_seconds===86400){const p=new Date(new Date().toLocaleString('en-US',{timeZone:'Europe/Paris'}));from=`${p.getFullYear()}-${String(p.getMonth()+1).padStart(2,'0')}-${String(p.getDate()).padStart(2,'0')}`;}
-        else if(c.repeat_seconds){from=new Date(Date.now()-c.repeat_seconds*1000).toISOString().split('T')[0];}
-        progress={current:(dbGet('SELECT COALESCE(SUM(vocal_seconds),0) AS t FROM discord_activity WHERE user_id=? AND date>=?',[userId,from])?.t)||0,required:c.required_value};
-      }
-      return { ...c, completed:eff?.verified===1, pending:eff?.verified===0, progress, screenshotPath: eff?.screenshot_path||null };
-    }),
-    progression: { done, total:challenges.length, pct:challenges.length?Math.round(done/challenges.length*100):0 },
-    activity: { watchSec, discMsgs, discVocal },
-    codes, orders,
+    user: { id: user.id, username: user.username, points: user.points, lifetime_points: user.lifetime_points,
+      rank: user.rank, nextRank: nextRank(user.lifetime_points),
+      discord_id: user.discord_id, discord_username: user.discord_username, discord_avatar: user.discord_avatar,
+      twitch_login: user.twitch_login, twitch_id: user.twitch_id, epic_username: user.epic_username },
+    challenges: list,
+    progression: { done, total: list.length, pct: list.length ? Math.round(done / list.length * 100) : 0 },
+    activity: {
+      watchSec:  dbGet('SELECT COALESCE(SUM(seconds),0) AS t FROM twitch_watch_sessions WHERE user_id=?', [userId]).t,
+      discMsgs:  dbGet('SELECT COALESCE(SUM(messages),0) AS t FROM discord_activity WHERE user_id=?', [userId]).t,
+      discVocal: dbGet('SELECT COALESCE(SUM(vocal_seconds),0) AS t FROM discord_activity WHERE user_id=?', [userId]).t,
+    },
+    codes:  dbAll("SELECT code,discount,used,expires_at, (expires_at < datetime('now')) AS expired FROM promo_codes WHERE user_id=? ORDER BY created_at DESC", [userId]),
+    orders: dbAll('SELECT o.id,o.result,o.created_at,i.name AS item_name,i.type AS item_type FROM shop_orders o JOIN shop_items i ON o.item_id=i.id WHERE o.user_id=? ORDER BY o.created_at DESC', [userId]),
+    seConfigured: se.isConfigured(),
   };
 }
 
-module.exports = { verifyChallenge, validateRedirectTimer, getUserStats, addPoints, removePoints, updateRank, markDone };
+// Date de la prochaine remise à zéro d'un challenge répétable
+function nextPeriodIso(repeatSeconds) {
+  const start = T.periodStart(repeatSeconds);
+  if (![T.DAY, T.WEEK, T.MONTH].includes(repeatSeconds))
+    return new Date(start.getTime() + repeatSeconds * 1000).toISOString();
+  // Périodes calendaires : on avance au-delà de la fin puis on recalcule le début
+  // (gère les mois de 28-31 jours et les changements d'heure)
+  const jump = repeatSeconds === T.MONTH ? 32 * 86400 : repeatSeconds + 3 * 3600;
+  return T.periodStart(repeatSeconds, new Date(start.getTime() + jump * 1000)).toISOString();
+}
+
+module.exports = {
+  RANKS, rankFor, nextRank, updateRank, addPoints, removePoints,
+  getPeriodKey, getEntry, markDone, completeChallenge, getProgress, autoCheck,
+  verifyChallenge, validateRedirectTimer, submitScreenshot, getUserStats, needsAdminReview,
+};

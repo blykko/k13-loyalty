@@ -4,36 +4,41 @@ require('dotenv').config();
 const express = require('express');
 const session = require('express-session');
 const path    = require('path');
-const { initDb, dbGet, dbRun } = require('./models/db');
+const { initDb, dbGet, dbRun, dbFlush } = require('./models/db');
 const discordBot = require('./services/discord-bot');
 
+const PUBLIC = path.join(__dirname, '../frontend/public');
+const isProduction = process.env.NODE_ENV === 'production';
+const SESSION_TTL = 7 * 24 * 3600; // secondes
+
 const app = express();
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.disable('x-powered-by');
+// Derrière un reverse proxy (nginx, Traefik…) : nécessaire pour que le cookie
+// "secure" soit posé en HTTPS, sinon la session est perdue après l'OAuth.
+if (isProduction) app.set('trust proxy', 1);
+app.use(express.json({ limit: '100kb' }));
+app.use(express.urlencoded({ extended: true, limit: '100kb' }));
 
 // ── Session store SQLite ────────────────────────────────────────────────────────
-// IMPORTANT : dbGet/dbRun ne fonctionnent qu'après initDb() — c'est pourquoi
-// les routes sont enregistrées DANS le .then() ci-dessous
+// dbGet/dbRun ne fonctionnent qu'après initDb() — les routes sont donc
+// enregistrées DANS le .then() ci-dessous.
+const now = () => Math.floor(Date.now() / 1000);
 class SQLiteStore extends session.Store {
   get(sid, cb) {
     try {
-      const row = dbGet('SELECT data FROM sessions WHERE sid=? AND expire>?', [sid, Math.floor(Date.now()/1000)]);
-      const data = row ? JSON.parse(row.data) : null;
-      console.log('[Session.get] sid:', sid.substring(0,8)+'...', '| userId:', data?.userId ?? 'NONE');
-      cb(null, data);
-    } catch(e) {
-      console.error('[Session.get] ERROR:', e.message);
+      const row = dbGet('SELECT data FROM sessions WHERE sid=? AND expire>?', [sid, now()]);
+      cb(null, row ? JSON.parse(row.data) : null);
+    } catch (e) {
+      console.error('[Session.get]', e.message);
       cb(null, null);
     }
   }
   set(sid, sess, cb) {
     try {
-      const exp  = Math.floor(Date.now()/1000) + 604800;
-      dbRun('INSERT OR REPLACE INTO sessions (sid,data,expire) VALUES (?,?,?)', [sid, JSON.stringify(sess), exp]);
-      console.log('[Session.set] sid:', sid.substring(0,8)+'...', '| userId:', sess.userId ?? 'NONE');
+      dbRun('INSERT OR REPLACE INTO sessions (sid,data,expire) VALUES (?,?,?)', [sid, JSON.stringify(sess), now() + SESSION_TTL]);
       cb(null);
-    } catch(e) {
-      console.error('[Session.set] ERROR:', e.message);
+    } catch (e) {
+      console.error('[Session.set]', e.message);
       cb(e);
     }
   }
@@ -41,12 +46,12 @@ class SQLiteStore extends session.Store {
     try { dbRun('DELETE FROM sessions WHERE sid=?', [sid]); } catch {}
     cb(null);
   }
-  touch(sid, sess, cb) { this.set(sid, sess, cb); }
+  // Prolonge la session sans la réécrire (au plus une fois par heure)
+  touch(sid, sess, cb) {
+    try { dbRun('UPDATE sessions SET expire=? WHERE sid=? AND expire<?', [now() + SESSION_TTL, sid, now() + SESSION_TTL - 3600]); } catch {}
+    cb(null);
+  }
 }
-
-setInterval(() => { try { dbRun('DELETE FROM sessions WHERE expire<?', [Math.floor(Date.now()/1000)]); } catch {} }, 3600000);
-
-const isProduction = process.env.NODE_ENV === 'production';
 
 app.use(session({
   store:             new SQLiteStore(),
@@ -56,34 +61,55 @@ app.use(session({
   cookie: {
     secure:   isProduction,
     httpOnly: true,
-    maxAge:   7 * 24 * 60 * 60 * 1000,
+    maxAge:   SESSION_TTL * 1000,
     sameSite: 'lax',
   },
 }));
 
+if (isProduction && !process.env.SESSION_SECRET) console.warn('⚠️  SESSION_SECRET non défini : sessions non sécurisées !');
+
 const PORT = process.env.PORT || 3000;
 
-// Toutes les routes sont enregistrées APRÈS initDb() pour garantir
-// que la DB est prête quand le session store l'utilise
 initDb().then(() => {
-  // Force no-cache sur index.html pour que /auth/me soit toujours appelé après redirect OAuth
-  app.get('/', (req, res) => {
-    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
-    res.setHeader('Pragma', 'no-cache');
-    res.sendFile(path.join(__dirname, '../frontend/public/index.html'));
-  });
-  app.use(express.static(path.join(__dirname, '../frontend/public')));
-  app.use('/uploads', express.static(path.join(__dirname, '../frontend/public/uploads')));
+  setInterval(() => { try { dbRun('DELETE FROM sessions WHERE expire<?', [now()]); } catch {} }, 3600000);
+
+  // index.html jamais mis en cache pour que /auth/me soit toujours rappelé après l'OAuth
+  const sendIndex = (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    res.sendFile(path.join(PUBLIC, 'index.html'));
+  };
+  app.get('/', sendIndex);
+  app.get('/leaderboard', (_, res) => res.sendFile(path.join(PUBLIC, 'leaderboard.html')));
+  app.use(express.static(PUBLIC, { index: false, maxAge: isProduction ? '1h' : 0 }));
   app.use('/auth',      require('./routes/auth'));
   app.use('/api/user',  require('./routes/user'));
   app.use('/api/admin', require('./routes/admin'));
+  app.use('/api', (_, res) => res.status(404).json({ ok: false, message: 'Route inconnue.' }));
 
-  app.get('/admin*', (_, res) => res.sendFile(path.join(__dirname, '../frontend/public/admin.html')));
-  app.get('*',       (_, res) => res.sendFile(path.join(__dirname, '../frontend/public/index.html')));
+  app.get('/admin*', (_, res) => res.sendFile(path.join(PUBLIC, 'admin.html')));
+  app.get('*', sendIndex);
+
+  // Erreurs non gérées (JSON invalide, fichier trop gros…)
+  app.use((err, req, res, _next) => {
+    console.error('[Erreur]', req.method, req.path, err.message);
+    const status = err.status || (err.code === 'LIMIT_FILE_SIZE' ? 413 : 500);
+    res.status(status).json({ ok: false, message: err.code === 'LIMIT_FILE_SIZE' ? 'Fichier trop lourd (8 Mo max).' : 'Erreur serveur.' });
+  });
 
   discordBot.startBot();
-  app.listen(PORT, () => {
+  const server = app.listen(PORT, () => {
     console.log(`\n🎮 K13 Loyalty  →  http://localhost:${PORT}`);
     console.log(`   Admin        →  http://localhost:${PORT}/admin\n`);
   });
+
+  // Arrêt propre (docker stop) : enregistre le vocal en cours et écrit la base sur disque
+  const shutdown = sig => {
+    console.log(`[${sig}] Arrêt…`);
+    try { discordBot.stopBot(); } catch {}
+    try { dbFlush(); } catch (e) { console.error('DB flush failed:', e); }
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 3000).unref();
+  };
+  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', shutdown);
 }).catch(e => { console.error('DB init failed:', e); process.exit(1); });

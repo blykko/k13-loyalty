@@ -43,12 +43,12 @@ async function stripeRequest(method, path, body) {
  * @param {string} customCode  - Le code affiché (ex: K13-GOLD-ABCDEF)
  * @param {number} expiresInDays - Validité en jours (défaut 30)
  */
-async function createPromoCode(discountPct, customCode, expiresInDays = 7) {
+async function createPromoCode(discountPct, customCode, expiresInDays = 30) {
   if (!STRIPE_KEY) throw new Error('STRIPE_SECRET_KEY non configuré dans .env');
   const couponId = COUPON_IDS[discountPct];
   if (!couponId) throw new Error(`STRIPE_COUPON_${discountPct} non configuré dans .env`);
 
-  // 7 jours par défaut, 1 utilisation max
+  // 1 utilisation max
   const expiresAt = Math.floor(Date.now() / 1000) + expiresInDays * 86400;
 
   const promo = await stripeRequest('POST', '/promotion_codes', {

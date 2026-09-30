@@ -1,6 +1,7 @@
 'use strict';
 const fetch = require('node-fetch');
 const { dbGet, dbRun } = require('../models/db');
+const { fromSql } = require('./time');
 
 const { TWITCH_CLIENT_ID, TWITCH_CLIENT_SECRET, TWITCH_REDIRECT_URI, TWITCH_CHANNEL_LOGIN } = process.env;
 
@@ -15,12 +16,32 @@ function getAuthUrl(state) {
   return `https://id.twitch.tv/oauth2/authorize?${p}`;
 }
 
+// Token d'application mis en cache jusqu'à expiration (au lieu d'un nouveau token à chaque appel)
+let appToken = null, appTokenExp = 0;
 async function getAppToken() {
+  if (appToken && Date.now() < appTokenExp) return appToken;
   const res = await fetch('https://id.twitch.tv/oauth2/token', {
     method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ client_id: TWITCH_CLIENT_ID, client_secret: TWITCH_CLIENT_SECRET, grant_type: 'client_credentials' }),
   });
-  return (await res.json()).access_token;
+  const data = await res.json();
+  if (!res.ok || !data.access_token) throw new Error('Twitch app token: ' + (data.message || res.status));
+  appToken = data.access_token;
+  appTokenExp = Date.now() + Math.max(60, (data.expires_in || 3600) - 300) * 1000;
+  return appToken;
+}
+
+// ID de la chaîne K13 (ne change jamais → mis en cache)
+let broadcasterId = null;
+async function getBroadcasterId() {
+  if (broadcasterId) return broadcasterId;
+  const token = await getAppToken();
+  const res = await fetch(`https://api.twitch.tv/helix/users?login=${encodeURIComponent(TWITCH_CHANNEL_LOGIN)}`, {
+    headers: { Authorization: `Bearer ${token}`, 'Client-Id': TWITCH_CLIENT_ID },
+  });
+  const id = (await res.json()).data?.[0]?.id;
+  if (!id) throw new Error(`Chaîne "${TWITCH_CHANNEL_LOGIN}" introuvable sur Twitch.`);
+  return (broadcasterId = id);
 }
 
 async function exchangeCode(code) {
@@ -69,13 +90,7 @@ async function checkFollow(userId) {
   if (!user?.twitch_id) throw new Error('Compte Twitch non lié.');
   const token = await getValidToken(userId);
   
-  const appToken = await getAppToken();
-  const chanRes  = await fetch(`https://api.twitch.tv/helix/users?login=${TWITCH_CHANNEL_LOGIN}`, {
-    headers: { Authorization: `Bearer ${appToken}`, 'Client-Id': TWITCH_CLIENT_ID },
-  });
-  const chanData = await chanRes.json();
-  if (!chanData.data?.length) throw new Error(`Chaîne "${TWITCH_CHANNEL_LOGIN}" introuvable sur Twitch.`);
-  const broadcasterId = chanData.data[0].id;
+  const broadcasterId = await getBroadcasterId();
 
   const res = await fetch(
     `https://api.twitch.tv/helix/channels/followed?user_id=${user.twitch_id}&broadcaster_id=${broadcasterId}`,
@@ -95,12 +110,7 @@ async function checkSub(userId) {
   if (!user?.twitch_id) throw new Error('Compte Twitch non lié.');
   const token = await getValidToken(userId);
 
-  const appToken = await getAppToken();
-  const chanRes  = await fetch(`https://api.twitch.tv/helix/users?login=${TWITCH_CHANNEL_LOGIN}`, {
-    headers: { Authorization: `Bearer ${appToken}`, 'Client-Id': TWITCH_CLIENT_ID },
-  });
-  const broadcasterId = (await chanRes.json()).data?.[0]?.id;
-  if (!broadcasterId) throw new Error('Chaîne K13 introuvable.');
+  const broadcasterId = await getBroadcasterId();
 
   // GET /helix/subscriptions/user — vérifie si l'utilisateur est abonné
   const res = await fetch(
@@ -114,42 +124,46 @@ async function checkSub(userId) {
   return data.data?.length > 0;
 }
 
+// Statut live mis en cache 60 s (appelé à chaque ping du tracker et affichage du dashboard)
+let liveCache = { value: false, at: 0 };
 async function isChannelLive() {
+  if (Date.now() - liveCache.at < 60_000) return liveCache.value;
   try {
-    if (!TWITCH_CLIENT_ID || !TWITCH_CLIENT_SECRET) {
-      console.warn('[Twitch] CLIENT_ID ou CLIENT_SECRET manquant dans .env');
-      return false;
-    }
+    if (!TWITCH_CLIENT_ID || !TWITCH_CLIENT_SECRET) return false;
     const token = await getAppToken();
-    const res = await fetch(`https://api.twitch.tv/helix/streams?user_login=${TWITCH_CHANNEL_LOGIN}`, {
+    const res = await fetch(`https://api.twitch.tv/helix/streams?user_login=${encodeURIComponent(TWITCH_CHANNEL_LOGIN)}`, {
       headers: { Authorization: `Bearer ${token}`, 'Client-Id': TWITCH_CLIENT_ID },
     });
     const data = await res.json();
-    console.log(`[Twitch] isChannelLive → ${TWITCH_CHANNEL_LOGIN}: ${data.data?.length > 0 ? 'EN LIVE ✅' : 'hors ligne'}`);
-    return data.data?.length > 0;
+    liveCache = { value: data.data?.length > 0, at: Date.now() };
   } catch (e) {
     console.error('[Twitch] isChannelLive error:', e.message);
-    return false;
+    liveCache = { value: false, at: Date.now() };
   }
+  return liveCache.value;
 }
 
+// ── Tracker manuel (utilisé seulement si StreamElements n'est pas configuré) ──
+const PING_MAX_GAP = 120; // un ping crédite au maximum 2 min
+
 function startWatchSession(userId) {
-  return dbRun('INSERT INTO twitch_watch_sessions (user_id,started_at,seconds) VALUES (?,datetime("now"),0)', [userId]).lastInsertRowid;
+  // Réutilise une session encore active (autre onglet) pour éviter le double comptage
+  const active = dbGet(`SELECT id FROM twitch_watch_sessions WHERE user_id=? AND source='tracker'
+    AND COALESCE(ended_at,started_at) >= datetime('now','-3 minutes') ORDER BY id DESC`, [userId]);
+  if (active) return active.id;
+  return dbRun("INSERT INTO twitch_watch_sessions (user_id,started_at,ended_at,seconds,source) VALUES (?,datetime('now'),datetime('now'),0,'tracker')", [userId]).lastInsertRowid;
 }
-function updateWatchSession(sessionId, userId) {
-  // Récupère la session et la dernière mise à jour
-  const row = dbGet('SELECT started_at, seconds, ended_at FROM twitch_watch_sessions WHERE id=? AND user_id=?', [sessionId, userId]);
+function updateWatchSession(sessionId, userId, live = true) {
+  const row = dbGet("SELECT started_at, seconds, ended_at FROM twitch_watch_sessions WHERE id=? AND user_id=? AND source='tracker'", [sessionId, userId]);
   if (!row) return 0;
-  // Calcule le delta depuis le dernier ping (ended_at), pas depuis started_at
-  const lastPing = row.ended_at ? new Date(row.ended_at).getTime() : new Date(row.started_at).getTime();
-  const delta    = Math.floor((Date.now() - lastPing) / 1000);
-  // Plafonne le delta à 120s (2 pings max) pour éviter les dérives
-  const safeDelta = Math.min(delta, 120);
-  const newTotal  = (row.seconds || 0) + safeDelta;
-  dbRun('UPDATE twitch_watch_sessions SET seconds=?,ended_at=datetime("now") WHERE id=? AND user_id=?', [newTotal, sessionId, userId]);
+  // Delta depuis le dernier ping, plafonné ; rien n'est crédité si le live est terminé
+  const lastPing = fromSql(row.ended_at || row.started_at).getTime();
+  const delta = live ? Math.max(0, Math.min(Math.floor((Date.now() - lastPing) / 1000), PING_MAX_GAP)) : 0;
+  const newTotal = (row.seconds || 0) + delta;
+  dbRun("UPDATE twitch_watch_sessions SET seconds=?,ended_at=datetime('now') WHERE id=?", [newTotal, sessionId]);
   return newTotal;
 }
-function endWatchSession(sessionId, userId) { return updateWatchSession(sessionId, userId); }
+function endWatchSession(sessionId, userId, live = true) { return updateWatchSession(sessionId, userId, live); }
 function getTotalWatchSeconds(userId) {
   return dbGet('SELECT COALESCE(SUM(seconds),0) AS t FROM twitch_watch_sessions WHERE user_id=?', [userId])?.t || 0;
 }

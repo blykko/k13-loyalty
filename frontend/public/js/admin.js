@@ -1,518 +1,562 @@
 'use strict';
-let allUsers=[],pendingCode=null;
+let allUsers = [], allChallenges = [], allItems = [], allCodes = [], currentPage = 'overview';
 
-window.addEventListener('DOMContentLoaded',async()=>{
-  const me=await api('GET','/auth/me');
-  if(me.ok&&me.isAdmin){show('admin-app');hide('admin-auth');loadOverview();}
+const PLATFORMS = { discord: 'Discord', twitch: 'Twitch', twitter: 'Twitter/X', tiktok: 'TikTok', instagram: 'Instagram', epic: 'Epic Games' };
+const CH_TYPES = {
+  redirect:  '🔗 Lien + timer',
+  screen:    '📸 Screenshot',
+  watchtime: '📺 Visionnage Twitch (auto)',
+  messages:  '💬 Messages Discord (auto)',
+  vocal:     '🎙️ Vocal Discord (auto)',
+  invite:    '🎟️ Invitations Discord (auto)',
+  join:      '🚪 Rejoindre le Discord',
+  follow:    '✅ Follow Twitch (API)',
+};
+const CATEGORIES = { permanent: '♾️ Permanent', daily: '🔄 Quotidien', weekly: '📅 Hebdo', monthly: '📆 Mensuel', contest: '🏆 Concours' };
+const CAT_REPEAT = { daily: 86400, weekly: 604800, monthly: 2592000 };
+const SHOP_TYPES = { promo_code: '🎟️ Code promo', discord_role: '🏅 Rôle Discord', product: '📦 Produit' };
+
+// ── Auth ───────────────────────────────────────────────────────────────────────
+window.addEventListener('DOMContentLoaded', async () => {
+  syncDarkBtn();
+  const me = await api('GET', '/auth/me');
+  if (me.ok && me.isAdmin) enterApp();
+});
+el('login-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const res = await api('POST', '/auth/admin/login', { password: el('admin-pwd').value });
+  if (!res.ok) { el('admin-err').textContent = res.message; return; }
+  enterApp();
+});
+function enterApp() {
+  hide('admin-auth'); show('admin-app');
+  adminPage(location.hash.slice(1) || 'overview', false);
+  refreshBadges();
+  setInterval(refreshBadges, 60000);
+}
+el('btn-logout').addEventListener('click', () => api('POST', '/auth/logout').then(() => location.reload()));
+el('btn-dark').addEventListener('click', () => {
+  const d = document.documentElement.classList.toggle('dark');
+  try { localStorage.setItem('k13-dark', d ? '1' : '0'); } catch {}
+  syncDarkBtn();
+});
+function syncDarkBtn() { el('btn-dark').textContent = document.documentElement.classList.contains('dark') ? '☀️' : '🌙'; }
+
+// ── Navigation ─────────────────────────────────────────────────────────────────
+const LOADERS = { overview: loadOverview, pending: loadPending, users: loadUsers, challenges: loadChallenges, shop: loadShop, codes: loadCodes, ranking: loadRanking, settings: () => {} };
+function adminPage(id, push = true) {
+  if (!LOADERS[id]) id = 'overview';
+  currentPage = id;
+  document.querySelectorAll('.apage').forEach(p => p.classList.toggle('active', p.id === 'page-' + id));
+  document.querySelectorAll('.nav-link').forEach(b => b.classList.toggle('active', b.dataset.page === id));
+  if (push) history.replaceState({}, '', '#' + id);
+  LOADERS[id]();
+}
+document.addEventListener('click', e => {
+  const p = e.target.closest('[data-page]');
+  if (p) adminPage(p.dataset.page);
 });
 
-async function adminLogin(){
-  const pwd=el('admin-pwd').value;
-  const res=await api('POST','/auth/admin/login',{password:pwd});
-  if(!res.ok){el('admin-err').textContent=res.message;return;}
-  show('admin-app');hide('admin-auth');loadOverview();
+async function refreshBadges() {
+  const s = await api('GET', '/api/admin/stats');
+  if (s.status === 403) return location.reload();
+  if (!s.ok) return;
+  setBadge('pending-badge', s.pendingVerifs);
+  setBadge('orders-badge', s.pendingOrders);
 }
+function setBadge(id, n) { el(id).textContent = n; el(id).classList.toggle('hidden', !n); }
 
-function adminPage(id){
-  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
-  document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
-  el('admin-page-'+id).classList.add('active');
-  const pages=['overview','stats','users','codes','challenges','shop','ranking','pending'];
-  document.querySelectorAll('.nav-btn')[pages.indexOf(id)]?.classList.add('active');
-  ({overview:loadOverview,users:loadUsers,codes:loadCodes,challenges:loadChallenges,shop:loadShop,pending:loadPending,ranking:loadRanking})[id]?.();
-}
-
-// ── Overview ───────────────────────────────────────────────────────────────────
-async function loadOverview(){
-  const[stats,users]=await Promise.all([api('GET','/api/admin/stats'),api('GET','/api/admin/users')]);
-  if(stats.ok){
-    el('a-members').textContent=stats.totalUsers;
-    el('a-codes').textContent=stats.totalCodes;
-    el('a-used').textContent=stats.usedCodes;
-    el('a-pending').textContent=stats.pendingVerifs;
-    el('pending-badge').textContent=stats.pendingVerifs;
+// ── Tableau de bord ────────────────────────────────────────────────────────────
+async function loadOverview() {
+  const [s, d] = await Promise.all([api('GET', '/api/admin/stats'), api('GET', '/api/admin/stats/detailed')]);
+  if (s.ok) {
+    el('k-members').textContent = fmtNum(s.totalUsers);
+    el('k-codes').textContent = `${s.usedCodes} / ${s.totalCodes}`;
+    el('k-pending').textContent = s.pendingVerifs;
+    el('k-pending-card').classList.toggle('hidden', !s.pendingVerifs);
+    el('k-orders').textContent = s.pendingOrders;
+    el('k-orders-card').classList.toggle('hidden', !s.pendingOrders);
+    setBadge('pending-badge', s.pendingVerifs);
+    setBadge('orders-badge', s.pendingOrders);
   }
-  if(users.ok){
-    el('overview-tbl').innerHTML=users.users.slice(0,20).map(u=>`<tr>
-      <td><strong>${esc(u.username)}</strong><br><small style="color:var(--t2)">${esc(u.discord_username||'')}</small></td>
-      <td style="font-weight:700;color:var(--blue)">${u.points}</td>
-      <td><span class="pill ${u.rank||'bronze'}">${cap(u.rank||'bronze')}</span></td>
-      <td>${u.discord_username?`<span style="color:var(--discord)">✓</span>`:'–'}</td>
-      <td>${u.twitch_login?`<span style="color:var(--twitch)">@${esc(u.twitch_login)}</span>`:'–'}</td>
-      <td>${u.twitter_login?`<span style="color:var(--twitter)">@${esc(u.twitter_login)}</span>`:'–'}</td>
-      <td>${u.tiktok_username?`<span style="color:#111">@${esc(u.tiktok_username)}</span>`:'–'}</td>
-      <td>${u.discord_messages||0}</td>
-      <td>${fmtTime(u.discord_vocal||0)}</td>
-      <td>${fmtTime(u.twitch_watch_seconds||0)}</td>
-      <td>${u.challenges_done||0}/${u.challenges_total||0}</td>
-      <td><button class="btn-sm" onclick="loadUserDetail(${u.id})">Détail</button></td>
-    </tr>`).join('')||'<tr><td colspan="12" class="empty-td">Aucun membre.</td></tr>';
+  if (!d.ok) return;
+  el('k-active').textContent = fmtNum(d.activeUsers7d);
+  el('k-done').textContent = fmtNum(d.totalCompleted);
+  el('k-pts').textContent = fmtNum(d.totalPoints);
+  el('k-conv').textContent = d.convRate + '%';
+  const st = (ok, label) => `<span class="status ${ok ? 'ok' : 'ko'}">${ok ? '✓' : '✗'} ${label}</span>`;
+  el('integration-status').innerHTML = st(d.botConfigured, 'Bot Discord') + st(d.seConfigured, 'StreamElements (visionnage auto)') + st(d.stripeConfigured, 'Stripe (codes promo)');
+
+  const colors = { gold: '#EAB308', silver: '#94A3B8', bronze: '#CD7C32' };
+  const total = d.rankDist.reduce((a, r) => a + r.c, 0) || 1;
+  el('rank-chart').innerHTML = d.rankDist.map(r => `
+    <div style="margin-bottom:10px">
+      <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px"><span>${rankLabel(r.rank)}</span><strong>${r.c}</strong></div>
+      <div class="bar"><div style="background:${colors[r.rank] || '#6B7280'};width:${Math.round(r.c / total * 100)}%"></div></div>
+    </div>`).join('') || '<p class="empty-msg">Aucun membre.</p>';
+  el('top-challenges-tbl').innerHTML = d.topChallenges.map(c => `<tr>
+    <td>${platChip(c.platform)} ${esc(c.name)}</td><td style="text-align:right;font-weight:700;color:var(--blue)">${c.completions}</td></tr>`).join('')
+    || '<tr><td class="empty-td">–</td></tr>';
+  el('discord-activity-tbl').innerHTML = d.discordActivity.map(a => `<tr>
+    <td><strong>${esc(a.discord_username || a.username)}</strong></td><td>${fmtNum(a.msgs7d)}</td><td>${fmtTime(a.vocal7d)}</td>
+    <td class="muted">${esc(a.last_activity || '–')}</td></tr>`).join('') || '<tr><td colspan="4" class="empty-td">Aucune activité.</td></tr>';
+  el('new-users-tbl').innerHTML = d.newUsers.map(u => `<tr>
+    <td><strong>${esc(u.discord_username || u.username)}</strong></td>
+    <td style="color:var(--twitch)">${u.twitch_login ? '@' + esc(u.twitch_login) : '–'}</td>
+    <td style="font-weight:600;color:var(--blue)">${fmtNum(u.points)}</td><td class="muted">${fmtDate(u.created_at)}</td></tr>`).join('')
+    || '<tr><td colspan="4" class="empty-td">Aucun nouveau membre.</td></tr>';
+}
+
+// ── Validations ────────────────────────────────────────────────────────────────
+async function loadPending() {
+  const res = await api('GET', '/api/admin/pending');
+  if (!res.ok) return;
+  setBadge('pending-badge', res.pending.length);
+  el('pending-tbl').innerHTML = res.pending.map(p => `<tr>
+    <td><strong>${esc(p.discord_username || p.username)}</strong></td>
+    <td>${platChip(p.platform)} ${esc(p.challenge_name)}<br><small style="color:var(--blue);font-weight:600">+${p.points} pts</small></td>
+    <td>${p.screenshot_path ? `<img class="thumb clickable" src="${esc(p.screenshot_path)}" data-zoom="${esc(p.screenshot_path)}" alt="screenshot"/>` : '<span class="muted">Pas de screen</span>'}</td>
+    <td class="muted">${fmtDateTime(p.completed_at)}</td>
+    <td><div class="actions">
+      <button class="btn-sm" data-approve="${p.id}">✓ Valider</button>
+      <button class="btn-sm" data-reject="${p.id}" style="color:var(--red)">✗ Rejeter</button>
+    </div></td>
+  </tr>`).join('') || '<tr><td colspan="5" class="empty-td">Aucune validation en attente ✓</td></tr>';
+}
+el('pending-tbl').addEventListener('click', async e => {
+  const z = e.target.closest('[data-zoom]');
+  if (z) return openModal(`<div class="amodal-head"><div class="amodal-title">Screenshot</div>${closeBtn()}</div><img src="${esc(z.dataset.zoom)}" style="max-width:100%;border-radius:8px" alt=""/>`, true);
+  const a = e.target.closest('[data-approve]'), r = e.target.closest('[data-reject]');
+  if (a) { a.disabled = true; const res = await api('POST', `/api/admin/pending/${a.dataset.approve}/approve`); toast(res.message, res.ok ? 'success' : 'error'); loadPending(); }
+  if (r && await confirmDialog('Rejeter cette demande ?', 'Le screenshot sera supprimé et le membre pourra en renvoyer un.', 'Rejeter')) {
+    const res = await api('POST', `/api/admin/pending/${r.dataset.reject}/reject`); toast(res.message, res.ok ? 'success' : 'error'); loadPending();
   }
-}
+});
 
-// ── Users ──────────────────────────────────────────────────────────────────────
-async function loadUsers(){
-  const res=await api('GET','/api/admin/users');
-  if(!res.ok) return;
-  allUsers=res.users; renderUsers(allUsers);
+// ── Membres ────────────────────────────────────────────────────────────────────
+async function loadUsers() {
+  const res = await api('GET', '/api/admin/users');
+  if (!res.ok) return;
+  allUsers = res.users;
+  el('users-lead').textContent = `${allUsers.length} membre${allUsers.length > 1 ? 's' : ''} inscrits. Clique sur une ligne pour voir le détail.`;
+  renderUsers();
 }
-function renderUsers(users){
-  el('users-tbl').innerHTML=users.map(u=>`<tr>
-    <td><strong>${esc(u.username)}</strong></td>
-    <td style="font-weight:700;color:var(--blue)">${u.points}</td>
-    <td><span class="pill ${u.rank||'bronze'}">${cap(u.rank)}</span></td>
-    <td style="font-size:12px">${[u.discord_username?'💬':'',u.twitch_login?'🟣':'',u.twitter_login?'𝕏':'',u.tiktok_username?'🎵':''].filter(Boolean).join(' ')}</td>
-    <td>${u.challenges_done||0}/${u.challenges_total||0}</td>
-    <td>${fmtTime(u.twitch_watch_seconds||0)}</td>
-    <td>${u.discord_messages||0}</td>
-    <td>${fmtTime(u.discord_vocal||0)}</td>
-    <td>
-      <button class="btn-sm" onclick="loadUserDetail(${u.id})">Détail</button>
-      <button class="btn-sm danger" onclick="adjustPoints(${u.id},'${esc(u.username)}')">±Pts</button>
-      <button class="btn-sm danger" onclick="resetUserChallenges(${u.id},'${esc(u.username)}')">Reset</button>
-    </td>
-  </tr>`).join('')||'<tr><td colspan="9" class="empty-td">Aucun membre.</td></tr>';
+function renderUsers() {
+  const q = el('user-search').value.trim().toLowerCase();
+  const list = q ? allUsers.filter(u => [u.username, u.discord_username, u.twitch_login, u.epic_username].some(v => (v || '').toLowerCase().includes(q))) : allUsers;
+  el('users-tbl').innerHTML = list.map(u => `<tr class="clickable" data-user="${u.id}">
+    <td><strong>${esc(u.discord_username || u.username)}</strong>${u.discord_username && u.discord_username !== u.username ? `<br><small class="muted">${esc(u.username)}</small>` : ''}</td>
+    <td><strong style="color:var(--blue)">${fmtNum(u.points)}</strong><br><small class="muted">${fmtNum(u.lifetime_points)} cumulés</small></td>
+    <td><span class="pill ${esc(u.rank)}">${rankLabel(u.rank)}</span></td>
+    <td>${[u.discord_id ? '💬' : '', u.twitch_login ? '🟣' : '', u.epic_username ? '🎮' : ''].join(' ')}</td>
+    <td>${u.challenges_done}</td>
+    <td>${fmtTime(u.twitch_watch_seconds)}</td>
+    <td>${fmtNum(u.discord_messages)}</td>
+    <td>${fmtTime(u.discord_vocal)}</td>
+    <td class="muted">${fmtDate(u.last_seen)}</td>
+  </tr>`).join('') || '<tr><td colspan="9" class="empty-td">Aucun membre.</td></tr>';
 }
-function filterUsers(){ const q=el('user-search').value.toLowerCase(); renderUsers(allUsers.filter(u=>(u.username||'').toLowerCase().includes(q)||(u.discord_username||'').toLowerCase().includes(q))); }
+el('user-search').addEventListener('input', renderUsers);
+el('users-tbl').addEventListener('click', e => { const r = e.target.closest('[data-user]'); if (r) openUser(+r.dataset.user); });
 
-async function loadUserDetail(id){
-  const res=await api('GET',`/api/admin/users/${id}`);
-  if(!res.ok) return;
-  const u=res.user;
-  show('user-detail');
-  el('detail-title').textContent=`${u.discord_username||u.username} — Détail complet`;
-  el('detail-chips').innerHTML=[
-    chip('Points',u.points),chip('Rang',cap(u.rank||'bronze')),
-    chip('Discord',u.discord_username?'@'+u.discord_username:'–'),
-    chip('Twitch',u.twitch_login?'@'+u.twitch_login:'–'),
-    chip('Twitter',u.twitter_login?'@'+u.twitter_login:'–'),
-    chip('TikTok',u.tiktok_username?'@'+u.tiktok_username:'–'),
-    chip('Epic',u.epic_username||'–'),
-    chip('Inscrit',fmtDate(u.created_at)),
-    chip('Vu le',fmtDate(u.last_seen)),
-  ].join('');
-  el('detail-actions').innerHTML=`
-    <button class="btn-sm" onclick="adjustPoints(${u.id},'${esc(u.discord_username||u.username)}')">± Ajuster les points</button>
-  `;
-  el('detail-challenges').innerHTML=res.challenges.map(c=>{
-    const s=c.status;
-    const pill=!s?'<span class="pill used">Non fait</span>':s.verified===1?'<span class="pill active">✓ Validé</span>':'<span class="pill pending">⏳ En attente</span>';
-    const actions=`
-      <button class="btn-sm" onclick="adminValidateCh(${u.id},${c.id},'${esc(c.name)}')">✓</button>
-      <button class="btn-sm danger" onclick="adminRemoveCh(${u.id},${c.id},'${esc(c.name)}')">✗</button>`;
-    return `<tr><td>${esc(c.name)}</td><td><span class="plat-chip ${c.platform}">${cap(c.platform)}</span></td><td style="font-weight:600;color:var(--blue)">+${c.points} pts</td><td>${pill}</td><td>${actions}</td></tr>`;
-  }).join('');
-  el('detail-section').scrollIntoView({behavior:'smooth'});
-}
+async function openUser(id) {
+  const res = await api('GET', `/api/admin/users/${id}`);
+  if (!res.ok) return toast(res.message || 'Erreur', 'error');
+  const u = res.user;
+  const chip = (l, v) => `<div class="chip"><div class="chip-lbl">${l}</div><div class="chip-val" title="${esc(v)}">${esc(v || '–')}</div></div>`;
+  openModal(`
+    <div class="amodal-head"><div class="amodal-title">${esc(u.discord_username || u.username)}</div>${closeBtn()}</div>
+    <div class="chips">
+      ${chip('Points disponibles', fmtNum(u.points))}${chip('Points cumulés', fmtNum(u.lifetime_points))}${chip('Rang', rankLabel(u.rank))}
+      ${chip('Discord', u.discord_username ? '@' + u.discord_username : '')}${chip('Twitch', u.twitch_login ? '@' + u.twitch_login : '')}
+      ${chip('Epic', u.epic_username)}${chip('Code créateur', u.epic_creator_code)}${chip('Inscrit le', fmtDate(u.created_at))}${chip('Vu le', fmtDate(u.last_seen))}
+    </div>
+    <form class="toolbar" id="pts-form">
+      <input class="fi" type="number" id="pts-delta" placeholder="+50 ou -50" required style="max-width:160px"/>
+      <button class="btn-primary sm" type="submit">Ajuster les points</button>
+      <span style="flex:1"></span>
+      <button class="btn-sm" type="button" id="u-reset">↺ Réinitialiser ses défis…</button>
+    </form>
+    <div class="section-title" style="margin-top:6px">Défis (période en cours)</div>
+    <div style="overflow-x:auto"><table class="tbl">
+      <thead><tr><th>Défi</th><th>Points</th><th>Statut</th><th>Total</th><th></th></tr></thead>
+      <tbody>${res.challenges.map(c => {
+        const s = c.status;
+        const pill = !s ? '<span class="pill used">Non fait</span>' : s.verified === 1 ? '<span class="pill active">✓ Validé</span>' : '<span class="pill pending">⏳ En attente</span>';
+        return `<tr><td>${platChip(c.platform)} ${esc(c.name)}${c.repeat_seconds ? ` <small class="muted">${periodLabel(c)}</small>` : ''}</td>
+          <td style="color:var(--blue);font-weight:600">+${c.points}</td><td>${pill}</td><td class="muted">${c.times}×</td>
+          <td><div class="actions">
+            ${s?.verified === 1 ? '' : `<button class="btn-sm" data-ch-validate="${c.id}">✓ Valider</button>`}
+            ${s ? `<button class="btn-sm" data-ch-remove="${c.id}" style="color:var(--red)">✗ Retirer</button>` : ''}
+          </div></td></tr>`;
+      }).join('')}</tbody>
+    </table></div>
+    ${res.codes.length ? `<div class="section-title">Codes promo</div><div style="overflow-x:auto"><table class="tbl"><tbody>${res.codes.map(c => `<tr><td class="mono">${esc(c.code)}</td><td>-${c.discount}%</td><td>${codeStatus(c)}</td><td class="muted">${fmtDate(c.created_at)}</td></tr>`).join('')}</tbody></table></div>` : ''}
+    ${res.orders.length ? `<div class="section-title">Achats</div><div style="overflow-x:auto"><table class="tbl"><tbody>${res.orders.map(o => `<tr><td>${esc(o.item_name)}</td><td class="mono">${esc(o.result || '–')}</td><td class="muted">${fmtDate(o.created_at)}</td></tr>`).join('')}</tbody></table></div>` : ''}
+  `, true);
 
-async function adjustPoints(userId,username){
-  const input=prompt(`Ajuster les points de ${username} :\n+50 pour ajouter, -50 pour retirer`);
-  if(!input) return;
-  const delta=parseInt(input);
-  if(isNaN(delta)) return;
-  const res=await api('POST',`/api/admin/users/${userId}/points`,{delta});
-  toast(res.message,res.ok?'success':'error');
-  if(res.ok){loadUsers();if(el('user-detail').style.display!=='none')loadUserDetail(userId);}
-}
-
-async function adminValidateCh(userId,challengeId,name){
-  const res=await api('POST',`/api/admin/users/${userId}/challenge/${challengeId}/validate`);
-  toast(res.message,res.ok?'success':'error');
-  if(res.ok) loadUserDetail(userId);
-}
-async function adminRemoveCh(userId,challengeId,name){
-  if(!confirm(`Retirer la validation de "${name}" pour cet utilisateur ?`)) return;
-  const res=await api('DELETE',`/api/admin/users/${userId}/challenge/${challengeId}`);
-  toast(res.message,res.ok?'success':'error');
-  if(res.ok) loadUserDetail(userId);
-}
-
-// ── Codes ──────────────────────────────────────────────────────────────────────
-async function loadCodes(){
-  const res=await api('GET','/api/admin/codes');
-  if(!res.ok) return;
-  el('codes-tbl').innerHTML=res.codes.map(c=>{
-    const exp=new Date(c.expires_at),status=c.used?'used':exp<new Date()?'expired':'active';
-    return `<tr>
-      <td style="font-family:monospace;font-weight:600">${esc(c.code)}</td>
-      <td>${esc(c.username)}</td><td style="font-weight:700;color:var(--blue)">-${c.discount}%</td>
-      <td style="font-size:11px">${fmtDate(c.created_at)}</td>
-      <td style="font-size:11px">${fmtDate(c.expires_at)}</td>
-      <td><span class="pill ${status}">${status==='used'?'Utilisé':status==='expired'?'Expiré':'Actif'}</span></td>
-    </tr>`;
-  }).join('')||'<tr><td colspan="6" class="empty-td">Aucun code.</td></tr>';
-}
-async function verifyCode(){
-  const code=el('verify-input').value.trim().toUpperCase();
-  const res=await api('GET',`/api/admin/codes/verify/${encodeURIComponent(code)}`);
-  const box=el('verify-result'),mark=el('mark-used');
-  box.style.display='block'; box.className='verify-result '+(res.valid?'valid':'invalid');
-  if(res.valid){ box.innerHTML=`✓ Valide — <strong>${esc(res.code.username)}</strong> · -${res.code.discount}% · Expire ${fmtDate(res.code.expires_at)}`; pendingCode=code; show('mark-used'); }
-  else{ box.textContent='✗ '+res.message; pendingCode=null; hide('mark-used'); }
-}
-async function markUsed(){
-  if(!pendingCode) return;
-  const res=await api('POST',`/api/admin/codes/${encodeURIComponent(pendingCode)}/use`);
-  toast(res.ok?'Code marqué utilisé.':res.message,res.ok?'success':'error');
-  el('verify-result').style.display='none'; hide('mark-used'); pendingCode=null; loadCodes();
+  el('pts-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    const delta = parseInt(el('pts-delta').value, 10);
+    if (!delta) return toast('Entre un nombre non nul.', 'error');
+    const r = await api('POST', `/api/admin/users/${u.id}/points`, { delta });
+    toast(r.message, r.ok ? 'success' : 'error');
+    if (r.ok) { openUser(u.id); loadUsers(); }
+  });
+  el('u-reset').addEventListener('click', async () => {
+    const choice = await choiceDialog(`Réinitialiser les défis de ${u.discord_username || u.username} ?`,
+      'Supprime ses validations et remet à zéro ses compteurs (messages, vocal, visionnage, invitations).',
+      [['keep', 'Garder ses points'], ['zero', 'Remettre aussi ses points à 0']]);
+    if (!choice) return;
+    const r = await api('POST', `/api/admin/users/${u.id}/reset`, { resetPoints: choice === 'zero' });
+    toast(r.message, r.ok ? 'success' : 'error');
+    if (r.ok) { openUser(u.id); loadUsers(); }
+  });
+  el('amodal-box').addEventListener('click', async e => {
+    const v = e.target.closest('[data-ch-validate]'), rm = e.target.closest('[data-ch-remove]');
+    if (!v && !rm) return;
+    const r = v
+      ? await api('POST', `/api/admin/users/${u.id}/challenge/${v.dataset.chValidate}/validate`)
+      : await api('DELETE', `/api/admin/users/${u.id}/challenge/${rm.dataset.chRemove}`);
+    toast(r.message, r.ok ? 'success' : 'error');
+    if (r.ok) { openUser(u.id); if (currentPage === 'users') loadUsers(); }
+  });
 }
 
 // ── Challenges ─────────────────────────────────────────────────────────────────
-async function loadChallenges(){
-  const res=await api('GET','/api/admin/challenges');
-  if(!res.ok) return;
-  // Filter by platform if selected
-  const filterPlat=el('ch-filter-plat')?.value||'all';
-  const filteredChs=filterPlat==='all'?res.challenges:res.challenges.filter(c=>c.platform===filterPlat);
-  el('challenges-tbl').innerHTML=filteredChs.map(c=>`<tr>
-    <td><span class="plat-chip ${c.platform}">${cap(c.platform)}</span></td>
-    <td><strong>${esc(c.name)}</strong><br><small style="color:var(--t2)">${c.type}${c.required_value?' · seuil:'+c.required_value:''}</small></td>
+async function loadChallenges() {
+  const res = await api('GET', '/api/admin/challenges');
+  if (!res.ok) return;
+  allChallenges = res.challenges;
+  renderChallenges();
+}
+function renderChallenges() {
+  const plat = el('ch-filter-plat').value, showInactive = el('ch-show-inactive').checked;
+  const list = allChallenges.filter(c => (plat === 'all' || c.platform === plat) && (showInactive || c.active));
+  el('challenges-tbl').innerHTML = list.map(c => `<tr style="${c.active ? '' : 'opacity:.55'}">
+    <td>${platChip(c.platform)}</td>
+    <td><strong>${esc(c.name)}</strong><br><small class="muted">${CH_TYPES[c.type] || esc(c.type)}${c.required_value ? ' · seuil ' + thresholdLabel(c) : ''}</small></td>
     <td style="font-weight:700;color:var(--blue)">${c.points}</td>
-    <td style="font-size:12px">${catLabel(c.category)}</td>
-    <td style="font-size:12px;color:var(--t2)">${c.repeat_seconds?fmtTime(c.repeat_seconds):'–'}</td>
-    <td><span class="pill ${c.active?'active':'used'}">${c.active?'Actif':'Inactif'}</span></td>
-    <td>
-      <button class="btn-sm" onclick="editChallenge(${c.id})">✏️ Éditer</button>
-      <button class="btn-sm danger" onclick="toggleCh(${c.id},${c.active?0:1})">${c.active?'Désact.':'Activer'}</button>
-      <button class="btn-sm" style="border-color:var(--amber);color:var(--amber)" onclick="resetAllUsersChallenge(${c.id},'${esc(c.name)}')">↺ Reset tous</button>
-    </td>
-  </tr>`).join('')||'<tr><td colspan="7" class="empty-td">Aucun challenge.</td></tr>';
+    <td style="font-size:12px">${periodLabel(c)}</td>
+    <td>${c.completions}</td>
+    <td><span class="pill ${c.active ? 'active' : 'used'}">${c.active ? 'Actif' : 'Inactif'}</span></td>
+    <td><div class="actions">
+      <button class="btn-sm" data-ch-edit="${c.id}">✏️</button>
+      <button class="btn-sm" data-ch-toggle="${c.id}">${c.active ? 'Désactiver' : 'Activer'}</button>
+      <button class="btn-sm" data-ch-reset="${c.id}" title="Retirer les validations de la période en cours pour tous">↺</button>
+      ${c.active ? '' : `<button class="btn-sm" data-ch-delete="${c.id}" style="color:var(--red)" title="Supprimer définitivement">🗑️</button>`}
+    </div></td>
+  </tr>`).join('') || '<tr><td colspan="7" class="empty-td">Aucun challenge.</td></tr>';
 }
-
-function toggleTypeFields(){
-  const t=el('nc-type').value;
-  el('nc-value-group').classList.toggle('hidden',!['watchtime','messages','vocal'].includes(t));
-  el('nc-redirect-group').classList.toggle('hidden',t!=='redirect');
-}
-
-async function createChallenge(){
-  let extra={};
-  try{extra=JSON.parse(el('nc-extra').value||'{}');}catch{}
-  const body={
-    platform:el('nc-platform').value, slug:el('nc-slug').value.trim(),
-    name:el('nc-name').value.trim(), description:el('nc-desc').value.trim(),
-    points:parseInt(el('nc-pts').value)||0, type:el('nc-type').value,
-    required_value:parseInt(el('nc-value').value)||0,
-    repeat_seconds:parseInt(el('nc-repeat').value)||0,
-    redirect_url:el('nc-redirect-url').value.trim()||null,
-    redirect_delay:parseInt(el('nc-redirect-delay').value)||15,
-    category:el('nc-category').value, extra,
-  };
-  if(!body.slug||!body.name||!body.points){toast('Remplis tous les champs requis.','error');return;}
-  const res=await api('POST','/api/admin/challenges',body);
-  toast(res.ok?'✅ Challenge créé !':res.message,res.ok?'success':'error');
-  if(res.ok) loadChallenges();
-}
-
-async function editChallenge(id){
-  const res=await api('GET','/api/admin/challenges');
-  const ch=res.challenges?.find(c=>c.id===id);
-  if(!ch) return;
-
-  // Crée un modal d'édition inline
-  const existing=document.getElementById('edit-ch-modal');
-  if(existing) existing.remove();
-
-  const modal=document.createElement('div');
-  modal.id='edit-ch-modal';
-  modal.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:200;backdrop-filter:blur(2px)';
-  modal.innerHTML=`
-    <div style="background:#fff;border-radius:16px;padding:28px;width:480px;max-width:95vw;max-height:90vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.15)">
-      <div style="font-size:17px;font-weight:700;margin-bottom:18px">✏️ Modifier "${esc(ch.name)}"</div>
-      <div class="form-group"><label class="form-lbl">Nom</label><input class="form-input" id="e-name" value="${esc(ch.name)}"/></div>
-      <div class="form-group"><label class="form-lbl">Description</label><input class="form-input" id="e-desc" value="${esc(ch.description)}"/></div>
-      <div class="form-group"><label class="form-lbl">Points</label><input class="form-input" id="e-pts" type="number" value="${ch.points}"/></div>
-      <div class="form-group"><label class="form-lbl">Type</label>
-        <select class="form-input" id="e-type">
-          <option value="redirect" ${ch.type==='redirect'?'selected':''}>🔗 Lien + timer</option>
-          <option value="screen"   ${ch.type==='screen'?'selected':''}>📸 Screenshot</option>
-          <option value="watchtime"${ch.type==='watchtime'?'selected':''}>📺 Watch time</option>
-          <option value="messages" ${ch.type==='messages'?'selected':''}>💬 Messages Discord</option>
-          <option value="vocal"    ${ch.type==='vocal'?'selected':''}>🎙️ Vocal Discord</option>
-          <option value="join"     ${ch.type==='join'?'selected':''}>🚪 Rejoindre Discord</option>
-          <option value="follow"   ${ch.type==='follow'?'selected':''}>✅ Follow (API auto)</option>
-        </select>
-      </div>
-      <div class="form-group"><label class="form-lbl">Catégorie</label>
-        <select class="form-input" id="e-cat">
-          <option value="permanent"${ch.category==='permanent'?'selected':''}>♾️ Permanent</option>
-          <option value="daily"    ${ch.category==='daily'?'selected':''}>🔄 Quotidien</option>
-          <option value="weekly"   ${ch.category==='weekly'?'selected':''}>📅 Hebdo</option>
-          <option value="monthly"  ${ch.category==='monthly'?'selected':''}>📆 Mensuel</option>
-          <option value="contest"  ${ch.category==='contest'?'selected':''}>🏆 Concours</option>
-        </select>
-      </div>
-      <div class="form-group"><label class="form-lbl">Valeur seuil (pour watchtime/messages/vocal)</label><input class="form-input" id="e-val" type="number" value="${ch.required_value||0}"/></div>
-      <div class="form-group"><label class="form-lbl">Répétition en secondes (0 = jamais)</label><input class="form-input" id="e-repeat" type="number" value="${ch.repeat_seconds||0}"/></div>
-      <div class="form-group"><label class="form-lbl">URL de redirection</label><input class="form-input" id="e-url" value="${esc(ch.redirect_url||'')}"/></div>
-      <div class="form-group"><label class="form-lbl">Délai timer (secondes)</label><input class="form-input" id="e-delay" type="number" value="${ch.redirect_delay||20}"/></div>
-      <div class="form-group"><label class="form-lbl">Actif</label>
-        <select class="form-input" id="e-active">
-          <option value="1" ${ch.active?'selected':''}>Oui</option>
-          <option value="0" ${!ch.active?'selected':''}>Non</option>
-        </select>
-      </div>
-      <div style="display:flex;gap:8px;margin-top:6px">
-        <button class="form-btn" onclick="saveEditChallenge(${id})" style="flex:1">Enregistrer</button>
-        <button class="form-btn" onclick="document.getElementById('edit-ch-modal').remove()" style="background:var(--t2)">Annuler</button>
-      </div>
-    </div>`;
-  document.body.appendChild(modal);
-}
-
-async function saveEditChallenge(id){
-  const body={
-    name:           el('e-name').value.trim(),
-    description:    el('e-desc').value.trim(),
-    points:         parseInt(el('e-pts').value)||0,
-    type:           el('e-type').value,
-    category:       el('e-cat').value,
-    required_value: parseInt(el('e-val').value)||0,
-    repeat_seconds: parseInt(el('e-repeat').value)||0,
-    redirect_url:   el('e-url').value.trim()||null,
-    redirect_delay: parseInt(el('e-delay').value)||20,
-    active:         parseInt(el('e-active').value),
-  };
-  const res=await api('PATCH',`/api/admin/challenges/${id}`,body);
-  toast(res.ok?'✅ Challenge mis à jour !':res.message,res.ok?'success':'error');
-  document.getElementById('edit-ch-modal')?.remove();
-  if(res.ok) loadChallenges();
-}
-
-async function toggleCh(id,active){ await api('PATCH',`/api/admin/challenges/${id}`,{active}); loadChallenges(); }
-async function deleteChallengeHard(id,name){
-  if(!confirm(`Supprimer définitivement "${name}" ? Les données des utilisateurs seront aussi supprimées.`)) return;
-  const res=await api('DELETE',`/api/admin/challenges/${id}?hard=1`);
-  toast(res.ok?'Supprimé.':res.message,res.ok?'success':'error');
-  if(res.ok) loadChallenges();
-}
-
-// ── Shop ───────────────────────────────────────────────────────────────────────
-async function loadShop(){
-  const[items,orders]=await Promise.all([api('GET','/api/admin/shop'),api('GET','/api/admin/orders')]);
-  if(items.ok) el('shop-tbl').innerHTML=items.items.map(i=>`<tr>
-    <td>${esc(i.name)}</td><td>${i.type}</td>
-    <td style="font-weight:700;color:var(--blue)">${i.cost_points} pts</td>
-    <td>${i.stock===-1?'∞':i.stock}</td>
-    <td><span class="pill ${i.active?'active':'used'}">${i.active?'Actif':'Inactif'}</span></td>
-    <td>
-      <button class="btn-sm danger" onclick="toggleShop(${i.id},${i.active?0:1})">${i.active?'Désact.':'Activer'}</button>
-      <button class="btn-sm danger" onclick="deleteShopHard(${i.id},'${esc(i.name)}')">🗑️</button>
-    </td>
-  </tr>`).join('')||'<tr><td colspan="6" class="empty-td">Aucun article.</td></tr>';
-  if(orders.ok) el('orders-tbl').innerHTML=orders.orders.map(o=>`<tr>
-    <td>${esc(o.username)}</td><td>${esc(o.item_name)}</td>
-    <td style="font-family:monospace;font-size:12px">${o.result||'–'}</td>
-    <td style="font-size:11px">${fmtDate(o.created_at)}</td>
-    <td><span class="pill active">${o.status}</span></td>
-  </tr>`).join('')||'<tr><td colspan="5" class="empty-td">Aucune commande.</td></tr>';
-}
-function updateShopTypeFields(){
-  const t=el('si-type').value;
-  el('si-role-group').style.display=t==='discord_role'?'':'none';
-  el('si-promo-group').style.display=t==='promo_code'?'':'none';
-  el('si-extra-group').style.display=t==='product'?'':'none';
-}
-
-async function addShopItem(){
-  const type=el('si-type').value;
-  let extra={};
-  if(type==='discord_role'){
-    const roleId=el('si-role-id').value.trim();
-    if(!roleId){toast('ID du rôle Discord requis.','error');return;}
-    extra={role_id:roleId};
-  } else if(type==='promo_code'){
-    const discount=parseInt(el('si-discount').value)||5;
-    const tier=el('si-tier').value.trim()||'bronze';
-    extra={discount,tier};
-  } else {
-    try{extra=JSON.parse(el('si-extra').value||'{}');}catch{toast('JSON invalide','error');return;}
+el('ch-filter-plat').addEventListener('change', renderChallenges);
+el('ch-show-inactive').addEventListener('change', renderChallenges);
+el('btn-new-ch').addEventListener('click', () => challengeForm(null));
+el('challenges-tbl').addEventListener('click', async e => {
+  const b = e.target.closest('button'); if (!b) return;
+  const c = allChallenges.find(x => x.id === +(b.dataset.chEdit || b.dataset.chToggle || b.dataset.chReset || b.dataset.chDelete));
+  if (!c) return;
+  if (b.dataset.chEdit) return challengeForm(c);
+  if (b.dataset.chToggle) {
+    const r = await api('PATCH', `/api/admin/challenges/${c.id}`, { active: c.active ? 0 : 1 });
+    toast(r.message, r.ok ? 'success' : 'error'); return loadChallenges();
   }
-  const body={name:el('si-name').value.trim(),description:el('si-desc').value.trim(),type,cost_points:parseInt(el('si-pts').value)||0,stock:parseInt(el('si-stock').value)||-1,extra};
-  const res=await api('POST','/api/admin/shop',body);
-  toast(res.ok?'✅ Article ajouté !':res.message,res.ok?'success':'error');
-  if(res.ok) loadShop();
-}
-async function toggleShop(id,active){ await api('PATCH',`/api/admin/shop/${id}`,{active}); loadShop(); }
-async function deleteShopHard(id,name){
-  if(!confirm(`Supprimer définitivement "${name}" ? Cette action est irréversible.`)) return;
-  const res=await api('DELETE',`/api/admin/shop/${id}?hard=1`);
-  toast(res.ok?'Supprimé.':res.message,res.ok?'success':'error');
-  if(res.ok) loadShop();
-}
+  if (b.dataset.chReset && await confirmDialog(`Réinitialiser « ${c.name} » pour tous ?`, 'Les validations sont supprimées et les points de la période en cours retirés aux membres concernés.', 'Réinitialiser')) {
+    const r = await api('POST', `/api/admin/challenges/${c.id}/reset`); toast(r.message, r.ok ? 'success' : 'error'); return loadChallenges();
+  }
+  if (b.dataset.chDelete && await confirmDialog(`Supprimer « ${c.name} » définitivement ?`, 'L\'historique des validations de ce défi sera effacé (les points déjà gagnés restent acquis).', 'Supprimer')) {
+    const r = await api('DELETE', `/api/admin/challenges/${c.id}?hard=1`); toast(r.message, r.ok ? 'success' : 'error'); return loadChallenges();
+  }
+});
 
-// ── Pending ────────────────────────────────────────────────────────────────────
-async function loadPending(){
-  const res=await api('GET','/api/admin/pending');
-  if(!res.ok) return;
-  el('pending-badge').textContent=res.pending.length;
-  el('pending-tbl').innerHTML=res.pending.map(p=>{
-    const hasScreen=!!p.screenshot_path;
-    const screenHtml=hasScreen
-      ?`<a href="${esc(p.screenshot_path)}" target="_blank"><img src="${esc(p.screenshot_path)}" style="width:60px;height:40px;object-fit:cover;border-radius:4px;cursor:pointer;border:1px solid var(--border)" alt="screen"/></a>`
-      :'<span style="color:var(--t3);font-size:11px">Pas de screen</span>';
-    return `<tr>
-      <td><strong>${esc(p.username)}</strong><br><small style="color:var(--t2)">${esc(p.discord_username||'')}</small></td>
-      <td>${esc(p.challenge_name)}<br><span style="font-size:11px;color:var(--blue)">+${p.points} pts</span></td>
-      <td><span class="plat-chip ${p.platform}">${cap(p.platform)}</span></td>
-      <td>${screenHtml}</td>
-      <td style="font-size:11px;color:var(--t2)">${fmtDate(p.completed_at)}</td>
-      <td>
-        <button class="btn-sm" onclick="approve(${p.id})">✓ Valider</button>
-        <button class="btn-sm danger" onclick="reject(${p.id})">✗ Rejeter</button>
-      </td>
-    </tr>`;
-  }).join('')||'<tr><td colspan="6" class="empty-td">Aucune validation en attente ✓</td></tr>';
-}
-async function approve(id){ const r=await api('POST',`/api/admin/pending/${id}/approve`); toast(r.message,r.ok?'success':'error'); loadPending(); }
-async function reject(id){ const r=await api('POST',`/api/admin/pending/${id}/reject`); toast(r.message,r.ok?'success':'error'); loadPending(); }
-
-// ── Reset challenges ───────────────────────────────────────────────────────────
-async function resetUserChallenge(userId,challengeId,chName,username){
-  if(!confirm(`Réinitialiser "${chName}" pour ${username} ?\nCela supprime la progression et retire les points.`)) return;
-  const r=await api('POST',`/api/admin/users/${userId}/challenge/${challengeId}/reset`);
-  toast(r.message,r.ok?'success':'error');
-  if(r.ok) loadUserDetail(userId);
-}
-
-async function resetAllUserChallenges(userId,username){
-  if(!confirm(`⚠️ Remettre TOUS les défis de ${username} à zéro ?\nPoints remis à 0, toutes progressions effacées.`)) return;
-  const r=await api('POST',`/api/admin/users/${userId}/reset-all`);
-  toast(r.message,r.ok?'success':'error');
-  if(r.ok){ loadUsers(); loadUserDetail(userId); }
-}
-
-async function resetAllUsersChallenge(challengeId,chName){
-  if(!confirm(`⚠️ Réinitialiser "${chName}" pour TOUS les membres ?\nPoints retirés, progressions effacées.`)) return;
-  const r=await api('POST','/api/admin/reset-all-users',{challengeId});
-  toast(r.message,r.ok?'success':'error');
-  if(r.ok) loadChallenges();
-}
-
-async function resetEverything(){
-  if(!prompt('Tape CONFIRMER pour remettre le programme à zéro pour TOUT le monde :')?.trim().toUpperCase()==='CONFIRMER') return;
-  if(!confirm('⚠️ DERNIÈRE CONFIRMATION : remettre TOUS les points et défis à 0 ?')) return;
-  const r=await api('POST','/api/admin/reset-all-users',{});
-  toast(r.message,r.ok?'success':'error');
-}
-
-
-
-async function loadStats(){
-  const res=await api('GET','/api/admin/stats/detailed');
-  if(!res.ok) return;
-  el('ds-pts-total').textContent=(res.totalPoints||0).toLocaleString('fr-FR');
-  el('ds-active').textContent=res.activeUsers7d||0;
-  el('ds-ch-total').textContent=res.totalCompleted||0;
-  el('ds-conv').textContent=(res.convRate||0)+'%';
-
-  // Rang chart (barres simples)
-  const rankColors={gold:'#EAB308',silver:'#94A3B8',bronze:'#CD7C32'};
-  const rankLabels={gold:'🥇 Gold',silver:'🥈 Silver',bronze:'🥉 Bronze'};
-  const total=res.rankDist.reduce((a,r)=>a+r.c,0)||1;
-  el('rank-chart').innerHTML=res.rankDist.map(r=>`
-    <div style="margin-bottom:8px">
-      <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px">
-        <span>${rankLabels[r.rank]||r.rank}</span><span style="font-weight:600">${r.c}</span>
+function challengeForm(c) {
+  const v = c || { platform: 'discord', type: 'redirect', category: 'permanent', points: 50, required_value: 0, repeat_seconds: 0, redirect_delay: 20, active: 1 };
+  const opts = (map, cur) => Object.entries(map).map(([k, l]) => `<option value="${k}" ${k === cur ? 'selected' : ''}>${l}</option>`).join('');
+  openModal(`
+    <div class="amodal-head"><div class="amodal-title">${c ? 'Modifier le challenge' : 'Nouveau challenge'}</div>${closeBtn()}</div>
+    <form id="ch-form" class="grid-form">
+      <div class="fg"><label class="fl">Plateforme</label><select class="fi" name="platform">${opts(PLATFORMS, v.platform)}</select></div>
+      <div class="fg"><label class="fl">Type de validation</label><select class="fi" name="type">${opts(CH_TYPES, v.type)}</select></div>
+      <div class="fg span2"><label class="fl">Nom</label><input class="fi" name="name" value="${esc(v.name || '')}" required maxlength="120"/></div>
+      <div class="fg span2"><label class="fl">Description</label><input class="fi" name="description" value="${esc(v.description || '')}" maxlength="300"/></div>
+      ${c ? '' : `<div class="fg span2"><label class="fl">Identifiant unique (slug)</label><input class="fi" name="slug" placeholder="ex: twitch-watch-2h" required pattern="[a-zA-Z0-9-]+"/><div class="fh">Lettres, chiffres et tirets.</div></div>`}
+      <div class="fg"><label class="fl">Points</label><input class="fi" type="number" name="points" min="1" value="${v.points}" required/></div>
+      <div class="fg"><label class="fl">Catégorie</label><select class="fi" name="category">${opts(CATEGORIES, v.category)}</select></div>
+      <div class="fg" data-when="repeat"><label class="fl">Répétable tous les… (jours)</label><input class="fi" type="number" name="repeat_days" min="0" step="1" value="${v.repeat_seconds ? Math.round(v.repeat_seconds / 86400) : 0}"/><div class="fh">0 = une seule fois.</div></div>
+      <div class="fg" data-when="threshold"><label class="fl" id="thr-label">Seuil</label><input class="fi" type="number" name="required_value" min="0" value="${thresholdInput(v)}"/></div>
+      <div class="fg span2" data-when="url"><label class="fl">Lien à ouvrir</label><input class="fi" name="redirect_url" type="url" value="${esc(v.redirect_url || '')}" placeholder="https://…"/></div>
+      <div class="fg" data-when="delay"><label class="fl">Durée du timer (secondes)</label><input class="fi" type="number" name="redirect_delay" min="5" value="${v.redirect_delay || 20}"/></div>
+      <div class="span2 toolbar" style="margin:6px 0 0;justify-content:flex-end">
+        <button type="button" class="btn-ghost sm" data-close>Annuler</button>
+        <button type="submit" class="btn-primary sm">${c ? 'Enregistrer' : 'Créer'}</button>
       </div>
-      <div style="background:var(--border);border-radius:4px;height:8px">
-        <div style="background:${rankColors[r.rank]||'#6B7280'};border-radius:4px;height:8px;width:${Math.round(r.c/total*100)}%;transition:width .4s"></div>
+    </form>`);
+  const f = el('ch-form');
+  const sync = () => {
+    const t = f.type.value, cat = f.category.value;
+    const show = (k, on) => f.querySelector(`[data-when="${k}"]`).classList.toggle('hidden', !on);
+    show('threshold', ['watchtime', 'messages', 'vocal', 'invite'].includes(t));
+    show('url', ['redirect', 'screen', 'follow'].includes(t));
+    show('delay', t === 'redirect');
+    show('repeat', !CAT_REPEAT[cat]);
+    el('thr-label').textContent = { watchtime: 'Temps de visionnage (minutes)', vocal: 'Temps en vocal (minutes)', messages: 'Nombre de messages', invite: 'Nombre d\'invitations' }[t] || 'Seuil';
+    f.redirect_url.required = t === 'redirect';
+  };
+  f.type.addEventListener('change', sync); f.category.addEventListener('change', sync); sync();
+  f.addEventListener('submit', async e => {
+    e.preventDefault();
+    const t = f.type.value, isTime = t === 'watchtime' || t === 'vocal';
+    const body = {
+      platform: f.platform.value, type: t, name: f.name.value.trim(), description: f.description.value.trim(),
+      points: +f.points.value, category: f.category.value,
+      repeat_seconds: CAT_REPEAT[f.category.value] || (+f.repeat_days.value || 0) * 86400,
+      required_value: (+f.required_value.value || 0) * (isTime ? 60 : 1),
+      redirect_url: f.redirect_url.value.trim() || null, redirect_delay: +f.redirect_delay.value || 20,
+    };
+    if (!c) body.slug = f.slug.value.trim();
+    const r = c ? await api('PATCH', `/api/admin/challenges/${c.id}`, body) : await api('POST', '/api/admin/challenges', body);
+    toast(r.message, r.ok ? 'success' : 'error');
+    if (r.ok) { closeModal(); loadChallenges(); }
+  });
+}
+function thresholdInput(c) { return c.type === 'watchtime' || c.type === 'vocal' ? Math.round((c.required_value || 0) / 60) : (c.required_value || 0); }
+function thresholdLabel(c) { return c.type === 'watchtime' || c.type === 'vocal' ? fmtTime(c.required_value) : c.required_value; }
+function periodLabel(c) {
+  if (c.category === 'contest') return CATEGORIES.contest;
+  if (!c.repeat_seconds) return CATEGORIES.permanent;
+  if (c.repeat_seconds === 86400) return CATEGORIES.daily;
+  if (c.repeat_seconds === 604800) return CATEGORIES.weekly;
+  if (c.repeat_seconds === 2592000) return CATEGORIES.monthly;
+  return `🔄 ${Math.round(c.repeat_seconds / 86400 * 10) / 10} j`;
+}
+
+// ── Boutique ───────────────────────────────────────────────────────────────────
+async function loadShop() {
+  const [items, orders] = await Promise.all([api('GET', '/api/admin/shop'), api('GET', '/api/admin/orders')]);
+  if (items.ok) {
+    allItems = items.items;
+    el('shop-tbl').innerHTML = allItems.map(i => `<tr style="${i.active ? '' : 'opacity:.55'}">
+      <td><strong>${esc(i.name)}</strong><br><small class="muted">${esc(i.description)}</small></td>
+      <td style="font-size:12px">${SHOP_TYPES[i.type] || esc(i.type)}${itemWarning(i)}</td>
+      <td style="font-weight:700;color:var(--blue)">${fmtNum(i.cost_points)}</td>
+      <td>${i.stock === -1 ? '∞' : i.stock}</td><td>${i.sold}</td>
+      <td><span class="pill ${i.active ? 'active' : 'used'}">${i.active ? 'Actif' : 'Inactif'}</span></td>
+      <td><div class="actions">
+        <button class="btn-sm" data-item-edit="${i.id}">✏️</button>
+        <button class="btn-sm" data-item-toggle="${i.id}">${i.active ? 'Désactiver' : 'Activer'}</button>
+        ${i.sold ? '' : `<button class="btn-sm" data-item-delete="${i.id}" style="color:var(--red)">🗑️</button>`}
+      </div></td></tr>`).join('') || '<tr><td colspan="7" class="empty-td">Aucun article.</td></tr>';
+  }
+  if (orders.ok) {
+    setBadge('orders-badge', orders.orders.filter(o => o.status === 'pending').length);
+    el('orders-tbl').innerHTML = orders.orders.map(o => `<tr>
+      <td>${esc(o.discord_username || o.username)}</td><td>${esc(o.item_name)}</td>
+      <td class="mono">${esc(o.result || '–')}</td><td class="muted">${fmtDateTime(o.created_at)}</td>
+      <td>${o.status === 'pending' ? `<button class="btn-sm" data-order-done="${o.id}">📦 Marquer traitée</button>` : '<span class="pill active">Traitée</span>'}</td>
+    </tr>`).join('') || '<tr><td colspan="5" class="empty-td">Aucune commande.</td></tr>';
+  }
+}
+function itemWarning(i) {
+  if (i.type !== 'discord_role') return '';
+  let extra = {}; try { extra = JSON.parse(i.extra || '{}'); } catch {}
+  return extra.role_id || extra.role_env ? '' : '<br><small style="color:var(--red)">⚠️ ID de rôle manquant</small>';
+}
+el('btn-new-item').addEventListener('click', () => itemForm(null));
+el('shop-tbl').addEventListener('click', async e => {
+  const b = e.target.closest('button'); if (!b) return;
+  const i = allItems.find(x => x.id === +(b.dataset.itemEdit || b.dataset.itemToggle || b.dataset.itemDelete));
+  if (!i) return;
+  if (b.dataset.itemEdit) return itemForm(i);
+  if (b.dataset.itemToggle) { const r = await api('PATCH', `/api/admin/shop/${i.id}`, { active: i.active ? 0 : 1 }); toast(r.message, r.ok ? 'success' : 'error'); return loadShop(); }
+  if (b.dataset.itemDelete && await confirmDialog(`Supprimer « ${i.name} » ?`, 'Action irréversible.', 'Supprimer')) {
+    const r = await api('DELETE', `/api/admin/shop/${i.id}?hard=1`); toast(r.message, r.ok ? 'success' : 'error'); loadShop();
+  }
+});
+el('orders-tbl').addEventListener('click', async e => {
+  const b = e.target.closest('[data-order-done]'); if (!b) return;
+  const r = await api('POST', `/api/admin/orders/${b.dataset.orderDone}/complete`); toast(r.message, r.ok ? 'success' : 'error'); loadShop();
+});
+
+function itemForm(item) {
+  let extra = {}; try { extra = JSON.parse(item?.extra || '{}'); } catch {}
+  const v = item || { type: 'promo_code', cost_points: 500, stock: -1 };
+  openModal(`
+    <div class="amodal-head"><div class="amodal-title">${item ? 'Modifier l\'article' : 'Nouvel article'}</div>${closeBtn()}</div>
+    <form id="item-form" class="grid-form">
+      <div class="fg span2"><label class="fl">Nom</label><input class="fi" name="name" value="${esc(v.name || '')}" required maxlength="80"/></div>
+      <div class="fg span2"><label class="fl">Description</label><input class="fi" name="description" value="${esc(v.description || '')}" maxlength="200"/></div>
+      <div class="fg"><label class="fl">Type</label><select class="fi" name="type" ${item ? 'disabled' : ''}>${Object.entries(SHOP_TYPES).map(([k, l]) => `<option value="${k}" ${k === v.type ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+      <div class="fg"><label class="fl">Coût (points)</label><input class="fi" type="number" name="cost_points" min="1" value="${v.cost_points}" required/></div>
+      <div class="fg"><label class="fl">Stock</label><input class="fi" type="number" name="stock" min="-1" value="${v.stock}"/><div class="fh">-1 = illimité</div></div>
+      <div class="fg" data-when="promo_code"><label class="fl">Réduction (%)</label><input class="fi" type="number" name="discount" min="1" max="100" value="${extra.discount || 10}"/><div class="fh">Stripe : un coupon STRIPE_COUPON_&lt;%&gt; doit exister.</div></div>
+      <div class="fg" data-when="promo_code"><label class="fl">Palier (préfixe du code)</label><select class="fi" name="tier">${['bronze', 'silver', 'gold'].map(t => `<option ${t === (extra.tier || 'bronze') ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
+      <div class="fg span2" data-when="discord_role"><label class="fl">ID du rôle Discord</label><input class="fi" name="role_id" value="${esc(extra.role_id || '')}" placeholder="1234567890123456789" pattern="\\d{15,21}"/><div class="fh">Le rôle du bot doit être au-dessus de ce rôle dans Discord.</div></div>
+      <div class="span2 toolbar" style="margin:6px 0 0;justify-content:flex-end">
+        <button type="button" class="btn-ghost sm" data-close>Annuler</button>
+        <button type="submit" class="btn-primary sm">${item ? 'Enregistrer' : 'Ajouter'}</button>
       </div>
-    </div>`).join('');
-
-  el('top-challenges-tbl').innerHTML=res.topChallenges.map(c=>`<tr>
-    <td><span class="plat-chip ${c.platform}">${cap(c.platform)}</span> ${esc(c.name)}</td>
-    <td style="font-weight:700;color:var(--blue)">${c.completions}</td>
-  </tr>`).join('')||'<tr><td colspan="2" class="empty-td">–</td></tr>';
-
-  el('discord-activity-tbl').innerHTML=res.discordActivity.map(d=>`<tr>
-    <td><strong>${esc(d.discord_username||d.username)}</strong></td>
-    <td>${d.msgs7d||0}</td>
-    <td>${fmtTime(d.vocal7d||0)}</td>
-    <td style="font-size:11px;color:var(--t2)">${d.last_activity||'–'}</td>
-  </tr>`).join('')||'<tr><td colspan="4" class="empty-td">Aucune activité.</td></tr>';
-
-  el('new-users-tbl').innerHTML=res.newUsers.map(u=>`<tr>
-    <td><strong>${esc(u.username)}</strong></td>
-    <td style="color:var(--discord)">${u.discord_username?'@'+esc(u.discord_username):'–'}</td>
-    <td style="color:var(--twitch)">${u.twitch_login?'@'+esc(u.twitch_login):'–'}</td>
-    <td style="font-weight:600;color:var(--blue)">${u.points}</td>
-    <td style="font-size:11px;color:var(--t2)">${fmtDate(u.created_at)}</td>
-  </tr>`).join('')||'<tr><td colspan="5" class="empty-td">Aucun nouveau membre.</td></tr>';
-
-  // Intégrations status
-  const intBox=document.getElementById('integration-status'); if(!intBox) return;
-  if(intBox) intBox.innerHTML=`
-    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:16px">
-      <div class="stat-card" style="flex:1;min-width:160px">
-        <div class="stat-lbl">StreamElements (watchtime auto)</div>
-        <div style="font-size:14px;font-weight:600;color:${res.seConfigured?'var(--green)':'var(--red)'}">${res.seConfigured?'✅ Connecté':'❌ Non configuré'}</div>
-      </div>
-      <div class="stat-card" style="flex:1;min-width:160px">
-        <div class="stat-lbl">Stripe (codes promo)</div>
-        <div style="font-size:14px;font-weight:600;color:${res.stripeConfigured?'var(--green)':'var(--red)'}">${res.stripeConfigured?'✅ Connecté':'❌ Non configuré (codes locaux)'}</div>
-      </div>
-    </div>`;
+    </form>`);
+  const f = el('item-form');
+  const sync = () => f.querySelectorAll('[data-when]').forEach(n => n.classList.toggle('hidden', n.dataset.when !== f.type.value));
+  f.type.addEventListener('change', sync); sync();
+  f.role_id.required = false;
+  f.addEventListener('submit', async e => {
+    e.preventDefault();
+    const type = f.type.value;
+    let ex = {};
+    if (type === 'promo_code') ex = { discount: +f.discount.value || 5, tier: f.tier.value };
+    if (type === 'discord_role') {
+      if (!f.role_id.value.trim()) return toast('ID du rôle Discord requis.', 'error');
+      ex = { role_id: f.role_id.value.trim() };
+    }
+    const body = { name: f.name.value.trim(), description: f.description.value.trim(), type, cost_points: +f.cost_points.value, stock: parseInt(f.stock.value, 10), extra: ex };
+    if (Number.isNaN(body.stock)) body.stock = -1;
+    const r = item ? await api('PATCH', `/api/admin/shop/${item.id}`, body) : await api('POST', '/api/admin/shop', body);
+    toast(r.message, r.ok ? 'success' : 'error');
+    if (r.ok) { closeModal(); loadShop(); }
+  });
 }
 
-
-async function resetUserChallenges(userId, username){
-  const withPts=confirm(`Réinitialiser TOUS les défis de ${username} ?\nOK = défis seulement\nAnnuler pour annuler`);
-  if(withPts===null) return;
-  const res=await api('POST',`/api/admin/users/${userId}/reset`,{resetPoints:false});
-  toast(res.message,res.ok?'success':'error');
-  if(res.ok) loadUsers();
+// ── Codes ──────────────────────────────────────────────────────────────────────
+async function loadCodes() {
+  const res = await api('GET', '/api/admin/codes');
+  if (!res.ok) return;
+  allCodes = res.codes;
+  renderCodes();
 }
-
-
-async function resetInvites(userId, username){
-  const msg = userId
-    ? `Réinitialiser les invitations de ${username} ?`
-    : 'Réinitialiser les invitations de TOUS les membres ?';
-  if(!confirm(msg)) return;
-  const res = await api('POST', '/api/admin/reset-invites', userId ? { userId } : {});
-  toast(res.message, res.ok ? 'success' : 'error');
-  if(res.ok && !userId) loadOverview();
+function renderCodes() {
+  const q = el('code-search').value.trim().toLowerCase();
+  const list = q ? allCodes.filter(c => [c.code, c.username, c.discord_username].some(v => (v || '').toLowerCase().includes(q))) : allCodes;
+  el('codes-tbl').innerHTML = list.map(c => `<tr>
+    <td class="mono" style="font-weight:600">${esc(c.code)}</td><td>${esc(c.discord_username || c.username)}</td>
+    <td style="font-weight:700;color:var(--blue)">-${c.discount}%</td>
+    <td class="muted">${fmtDate(c.created_at)}</td><td class="muted">${fmtDate(c.expires_at)}</td><td>${codeStatus(c)}</td>
+  </tr>`).join('') || '<tr><td colspan="6" class="empty-td">Aucun code.</td></tr>';
 }
+el('code-search').addEventListener('input', renderCodes);
+el('verify-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const code = el('verify-input').value.trim().toUpperCase();
+  const res = await api('GET', `/api/admin/codes/verify/${encodeURIComponent(code)}`);
+  const box = el('verify-result');
+  box.classList.remove('hidden');
+  box.innerHTML = res.valid
+    ? `<span class="pill active">✓ Valide</span> <strong>${esc(res.code.discord_username || res.code.username)}</strong> · -${res.code.discount}% · expire le ${fmtDate(res.code.expires_at)}
+       <button class="btn-primary sm" type="button" id="btn-mark-used">Marquer utilisé</button>`
+    : `<span class="pill expired">✗ ${esc(res.message)}</span>`;
+  el('btn-mark-used')?.addEventListener('click', async () => {
+    const r = await api('POST', `/api/admin/codes/${encodeURIComponent(code)}/use`);
+    toast(r.message, r.ok ? 'success' : 'error');
+    box.classList.add('hidden'); el('verify-input').value = ''; loadCodes();
+  });
+});
 
-async function resetAll(){
-  const confirm1=prompt('⚠️ ATTENTION : Ceci réinitialisera les défis de TOUS les membres.\nTape CONFIRMER pour continuer :');
-  if(confirm1!=='CONFIRMER'){ toast('Annulé.'); return; }
-  const withPts=confirm('Remettre aussi les points à 0 ?');
-  const res=await api('POST','/api/admin/reset-all',{confirmText:'CONFIRMER',resetPoints:withPts});
-  toast(res.message,res.ok?'success':'error');
-}
-
-// ── Live Ranking ───────────────────────────────────────────────────────────────
-async function loadRanking(){
-  const res=await api('GET','/api/admin/live-ranking');
-  if(!res.ok) return;
-  el('ranking-tbl').innerHTML=res.ranking.map((r,i)=>`<tr>
-    <td style="font-weight:700;color:var(--t2)">${i+1}</td>
-    <td><strong>${esc(r.discord_username||r.username)}</strong></td>
-    <td style="color:var(--twitch)">${r.twitch_login?'@'+esc(r.twitch_login):'–'}</td>
+// ── Live ranking ───────────────────────────────────────────────────────────────
+async function loadRanking() {
+  const res = await api('GET', '/api/admin/live-ranking');
+  if (!res.ok) return;
+  el('ranking-tbl').innerHTML = res.ranking.map((r, i) => `<tr>
+    <td style="font-weight:700;color:var(--t2)">${i < 3 ? ['🥇', '🥈', '🥉'][i] : i + 1}</td>
+    <td><strong>${esc(r.discord_username || r.username)}</strong></td>
+    <td style="color:var(--twitch)">${r.twitch_login ? '@' + esc(r.twitch_login) : '–'}</td>
     <td style="font-weight:700;color:var(--blue)">${fmtTime(r.total_seconds)}</td>
-    <td style="color:var(--t2)">${r.session_count} sessions</td>
-    <td style="font-size:11px;color:var(--t2)">${fmtDate(r.last_session)}</td>
-  </tr>`).join('')||'<tr><td colspan="6" class="empty-td">Aucune donnée de visionnage.</td></tr>';
+    <td>${fmtTime(r.week_seconds)}</td>
+    <td class="muted">${fmtDate(r.last_session)}</td>
+  </tr>`).join('') || '<tr><td colspan="6" class="empty-td">Aucune donnée de visionnage.</td></tr>';
+}
+
+// ── Paramètres ─────────────────────────────────────────────────────────────────
+document.querySelectorAll('[data-diag]').forEach(b => b.addEventListener('click', async () => {
+  el('diag-result').textContent = 'Test en cours…';
+  const r = await api('GET', `/api/admin/diag/${b.dataset.diag}`);
+  el('diag-result').textContent = r.message || JSON.stringify(r);
+}));
+el('pwd-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  if (el('new-pwd').value !== el('new-pwd2').value) return toast('Les mots de passe ne correspondent pas.', 'error');
+  const r = await api('POST', '/api/admin/change-password', { newPassword: el('new-pwd').value });
+  toast(r.message, r.ok ? 'success' : 'error');
+  if (r.ok) e.target.reset();
+});
+el('btn-reset-all').addEventListener('click', async () => {
+  const choice = await choiceDialog('Réinitialiser TOUS les membres ?', 'Toutes les validations et tous les compteurs seront effacés. Action irréversible.',
+    [['keep', 'Défis seulement'], ['zero', 'Défis + points à 0']], true);
+  if (!choice) return;
+  const typed = await promptDialog('Confirmation', 'Tape CONFIRMER pour continuer.');
+  if (typed !== 'CONFIRMER') return toast('Annulé.');
+  const r = await api('POST', '/api/admin/reset-all', { confirmText: 'CONFIRMER', resetPoints: choice === 'zero' });
+  toast(r.message, r.ok ? 'success' : 'error');
+});
+
+// ── Modales ────────────────────────────────────────────────────────────────────
+function openModal(html, wide = false) {
+  const box = el('amodal-box');
+  const fresh = box.cloneNode(false); // supprime les anciens écouteurs
+  box.replaceWith(fresh);
+  fresh.className = 'amodal-box' + (wide ? ' wide' : '');
+  fresh.innerHTML = html;
+  fresh.addEventListener('click', e => { if (e.target.closest('[data-close]')) closeModal(); });
+  show('amodal');
+  fresh.querySelector('input:not([type=hidden]),select')?.focus();
+}
+function closeModal() { hide('amodal'); _resolve?.(null); _resolve = null; }
+el('amodal').addEventListener('mousedown', e => { if (e.target.id === 'amodal') closeModal(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !el('amodal').classList.contains('hidden')) closeModal(); });
+const closeBtn = () => '<button class="icon-btn" data-close aria-label="Fermer">✕</button>';
+
+let _resolve = null;
+function choiceDialog(title, desc, choices, danger = false) {
+  return new Promise(resolve => {
+    openModal(`<div class="amodal-head"><div class="amodal-title">${esc(title)}</div>${closeBtn()}</div>
+      <p class="muted" style="margin-bottom:16px">${esc(desc)}</p>
+      <div class="toolbar" style="justify-content:flex-end;margin:0">
+        <button class="btn-ghost sm" data-close>Annuler</button>
+        ${choices.map(([k, l], i) => `<button class="${danger || i === choices.length - 1 ? 'btn-sm danger' : 'btn-primary sm'}" data-choice="${k}">${esc(l)}</button>`).join('')}
+      </div>`);
+    _resolve = resolve;
+    el('amodal-box').addEventListener('click', e => {
+      const c = e.target.closest('[data-choice]'); if (!c) return;
+      _resolve = null; hide('amodal'); resolve(c.dataset.choice);
+    });
+  });
+}
+async function confirmDialog(title, desc, label) { return !!(await choiceDialog(title, desc, [['ok', label]])); }
+function promptDialog(title, desc) {
+  return new Promise(resolve => {
+    openModal(`<div class="amodal-head"><div class="amodal-title">${esc(title)}</div>${closeBtn()}</div>
+      <form id="prompt-form"><p class="muted" style="margin-bottom:10px">${esc(desc)}</p>
+      <input class="fi" id="prompt-input" autocomplete="off" style="margin-bottom:14px"/>
+      <div class="toolbar" style="justify-content:flex-end;margin:0"><button type="button" class="btn-ghost sm" data-close>Annuler</button><button class="btn-sm danger" type="submit">Valider</button></div></form>`);
+    _resolve = resolve;
+    el('prompt-form').addEventListener('submit', e => { e.preventDefault(); const v = el('prompt-input').value.trim(); _resolve = null; hide('amodal'); resolve(v); });
+  });
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
-function catLabel(c){ return{daily:'🔄 Quotidien',weekly:'📅 Hebdo',monthly:'📆 Mensuel',permanent:'♾️ Permanent',contest:'🏆 Concours'}[c]||c||'–'; }
-function chip(lbl,val){ return `<div class="detail-chip"><div class="chip-lbl">${lbl}</div><div class="chip-val">${esc(String(val||'–'))}</div></div>`; }
-function cap(s){ return s?s.charAt(0).toUpperCase()+s.slice(1):''; }
-function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-function fmtDate(d){ return d?new Date(d).toLocaleDateString('fr-FR'):'–'; }
-function fmtTime(s){ if(!s) return '0h'; const h=Math.floor(s/3600),m=Math.floor((s%3600)/60); return h?`${h}h${m?m+'m':''}`:m?`${m}min`:'0h'; }
-function el(id){ return document.getElementById(id); }
-function show(id){ el(id)?.classList.remove('hidden'); }
-function hide(id){ el(id)?.classList.add('hidden'); }
+function codeStatus(c) { return c.used ? '<span class="pill used">Utilisé</span>' : c.expired ? '<span class="pill expired">Expiré</span>' : '<span class="pill active">Actif</span>'; }
+function rankLabel(r) { return { gold: '🥇 Gold', silver: '🥈 Silver', bronze: '🥉 Bronze' }[r] || esc(r || '–'); }
+function platChip(p) { return `<span class="plat-chip ${esc(p)}">${esc(PLATFORMS[p] || p)}</span>`; }
+function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+function fmtNum(n) { return Number(n || 0).toLocaleString('fr-FR'); }
+function parseDate(d) { return d ? new Date(/[zZ]|[+-]\d\d:?\d\d$/.test(d) ? d : d.replace(' ', 'T') + 'Z') : null; }
+function fmtDate(d) { const x = parseDate(d); return x && x.getFullYear() > 2000 ? x.toLocaleDateString('fr-FR') : '–'; }
+function fmtDateTime(d) { const x = parseDate(d); return x ? x.toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : '–'; }
+function fmtTime(s) { if (!s) return '0 min'; const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60); return h ? `${h}h${m ? String(m).padStart(2, '0') : ''}` : `${m} min`; }
+function el(id) { return document.getElementById(id); }
+function show(id) { el(id)?.classList.remove('hidden'); }
+function hide(id) { el(id)?.classList.add('hidden'); }
 let toastT;
-function toast(msg,type='info'){
-  const t=el('toast'); t.textContent=msg; t.className='toast show '+(type||'info');
-  clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove('show'),3500);
+function toast(msg, type = 'info') {
+  if (!msg) return;
+  const t = el('toast'); t.textContent = msg; t.className = 'toast show ' + type;
+  clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), 3500);
 }
-async function api(method,url,body){
-  try{ const o={method,headers:{'Content-Type':'application/json'},credentials:'same-origin'}; if(body) o.body=JSON.stringify(body); return await(await fetch(url,o)).json(); }
-  catch{ return{ok:false,message:'Erreur réseau.'}; }
+async function api(method, url, body) {
+  try {
+    const o = { method, headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin' };
+    if (body) o.body = JSON.stringify(body);
+    const res = await fetch(url, o);
+    const data = await res.json().catch(() => ({ ok: false, message: 'Réponse invalide du serveur.' }));
+    data.status = res.status;
+    return data;
+  } catch { return { ok: false, message: 'Erreur réseau.' }; }
 }

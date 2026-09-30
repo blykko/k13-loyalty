@@ -20,78 +20,63 @@ function isConfigured() {
 async function getViewerWatchtime(twitchUsername) {
   if (!isConfigured()) throw new Error('StreamElements non configuré');
   const url = `${BASE}/points/${SE_CHANNEL}/${encodeURIComponent(twitchUsername)}`;
-  console.log('[SE] GET', url);
   const res = await fetch(url, {
     headers: { 'Authorization': `Bearer ${SE_JWT}`, 'Accept': 'application/json' },
   });
   const text = await res.text();
-  console.log('[SE] Status:', res.status, '| Body:', text.substring(0, 200));
   if (res.status === 404) return { watchtime: 0, points: 0, found: false };
   if (!res.ok) throw new Error(`StreamElements API ${res.status}: ${text}`);
   const data = JSON.parse(text);
   // watchtime est en MINUTES dans SE
   const watchtimeSecs = (data.watchtime || 0) * 60;
-  console.log(`[SE] ${twitchUsername} → watchtime: ${data.watchtime} min = ${watchtimeSecs} sec | points: ${data.points}`);
   return { found: true, points: data.points || 0, watchtime: watchtimeSecs, rank: data.rank || 0 };
 }
 
 // ── Sync watchtime StreamElements → notre DB ───────────────────────────────────
-// Appelé quand un utilisateur veut valider un challenge watchtime
-// Récupère les données SE et les stocke comme une session Twitch unique
-async function syncWatchtimeForUser(userId) {
+// SE ne donne qu'un CUMUL. Pour que les challenges quotidiens/hebdo ne soient pas
+// validés par le visionnage passé, on stocke :
+//   - une ligne "de base" datée de 2000-01-01 (cumul au 1er sync → compte uniquement
+//     pour les challenges permanents)
+//   - puis une ligne par augmentation, datée du moment du sync.
+// users.se_last_total mémorise le dernier cumul : un reset admin (suppression des
+// lignes) remet donc réellement le compteur à zéro.
+const SYNC_MIN_INTERVAL = 2 * 60 * 1000;
+const lastSync = new Map();
+
+async function syncWatchtimeForUser(userId, { force = false } = {}) {
   if (!isConfigured()) return null;
 
-  const user = dbGet('SELECT twitch_login FROM users WHERE id=?', [userId]);
+  const user = dbGet('SELECT twitch_login, se_last_total FROM users WHERE id=?', [userId]);
   if (!user?.twitch_login) return null;
+
+  // Limite les appels à l'API SE (le dashboard se recharge souvent)
+  const last = lastSync.get(userId) || 0;
+  if (!force && Date.now() - last < SYNC_MIN_INTERVAL) return { synced: false, throttled: true };
+  if (force && Date.now() - last < 15 * 1000) return { synced: false, throttled: true };
+  lastSync.set(userId, Date.now());
 
   try {
     const seData = await getViewerWatchtime(user.twitch_login);
     if (!seData.found) return { synced: false, message: 'Viewer non trouvé sur StreamElements' };
 
-    // Stocke comme une session "se_sync" horodatée
-    // On utilise un slug spécial pour distinguer des sessions manuelles
-    const existingSync = dbGet(
-      "SELECT id, seconds FROM twitch_watch_sessions WHERE user_id=? AND ended_at='se_sync'",
-      [userId]
-    );
-
-    if (existingSync) {
-      // Met à jour seulement si le nouveau total est plus grand
-      if (seData.watchtime > existingSync.seconds) {
-        dbRun(
-          "UPDATE twitch_watch_sessions SET seconds=?, started_at=datetime('now') WHERE id=?",
-          [seData.watchtime, existingSync.id]
-        );
-      }
-    } else {
-      dbRun(
-        "INSERT INTO twitch_watch_sessions (user_id, started_at, ended_at, seconds) VALUES (?, datetime('now'), 'se_sync', ?)",
-        [userId, seData.watchtime]
-      );
+    const total = seData.watchtime;
+    if (user.se_last_total == null) {
+      if (total > 0) dbRun(`INSERT INTO twitch_watch_sessions (user_id,started_at,ended_at,seconds,source)
+             VALUES (?,'2000-01-01 00:00:00','2000-01-01 00:00:00',?,'se')`, [userId, total]);
+      dbRun('UPDATE users SET se_last_total=? WHERE id=?', [total, userId]);
+    } else if (total > user.se_last_total) {
+      dbRun(`INSERT INTO twitch_watch_sessions (user_id,started_at,ended_at,seconds,source)
+             VALUES (?,datetime('now'),datetime('now'),?,'se')`, [userId, total - user.se_last_total]);
+      dbRun('UPDATE users SET se_last_total=? WHERE id=?', [total, userId]);
+    } else if (total < user.se_last_total) {
+      // Cumul SE remis à zéro côté StreamElements : on repart de la nouvelle valeur
+      dbRun('UPDATE users SET se_last_total=? WHERE id=?', [total, userId]);
     }
-
-    return { synced: true, watchtime: seData.watchtime, watchtimeH: (seData.watchtime/3600).toFixed(1) };
+    return { synced: true, watchtime: seData.watchtime };
   } catch (e) {
     console.error('[StreamElements] sync error:', e.message);
     return { synced: false, message: e.message };
   }
 }
 
-// ── Vérifie le watchtime pour un challenge donné ───────────────────────────────
-async function checkWatchtimeForChallenge(userId, requiredSeconds) {
-  // D'abord sync avec SE
-  const sync = await syncWatchtimeForUser(userId);
-
-  // Calcule le total depuis notre DB (inclut sessions manuelles + sync SE)
-  const total = (dbGet('SELECT COALESCE(SUM(seconds),0) AS t FROM twitch_watch_sessions WHERE user_id=?', [userId])?.t) || 0;
-
-  return {
-    total,
-    totalH: (total / 3600).toFixed(1),
-    required: requiredSeconds,
-    ok: total >= requiredSeconds,
-    seSync: sync,
-  };
-}
-
-module.exports = { isConfigured, getViewerWatchtime, syncWatchtimeForUser, checkWatchtimeForChallenge };
+module.exports = { isConfigured, getViewerWatchtime, syncWatchtimeForUser };
