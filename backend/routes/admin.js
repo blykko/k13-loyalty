@@ -357,6 +357,15 @@ router.get('/diag/streamelements', async (req, res) => {
   }
 });
 
+router.get('/diag/discord', async (req, res) => {
+  const id = /^\d{15,21}$/.test(req.query.dm || '') ? req.query.dm : null;
+  const d = await notify.diagnose(id);
+  const sent = d.botReady ? await notify.postMissingPending().catch(() => 0) : 0;
+  if (sent) d.checks.push({ ok: true, label: `${sent} demande(s) en attente envoyée(s) dans le salon` });
+  res.json({ ok: d.checks.every(c => c.ok), checks: d.checks,
+    message: d.checks.map(c => `${c.ok ? '✅' : '❌'} ${c.label}`).join('\n') });
+});
+
 router.get('/diag/twitch', async (req, res) => {
   const live = await twitch.isChannelLive().catch(() => false);
   res.json({ ok: true, live, channel: process.env.TWITCH_CHANNEL_LOGIN,

@@ -142,8 +142,10 @@ function autoCheck(userId, opts = {}) {
   return awarded;
 }
 
+// Tout screenshot est vérifié par l'équipe (sur Discord ou dans l'admin du site) :
+// une image validée automatiquement ne prouve rien.
 function needsAdminReview(ch) {
-  return ch.slug === 'twitch-sub' || ch.platform === 'epic';
+  return ch.type === 'screen';
 }
 
 const TWITTER_TYPES = ['tw_like', 'tw_retweet', 'tw_reply', 'tw_follow'];

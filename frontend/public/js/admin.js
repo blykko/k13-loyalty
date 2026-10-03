@@ -476,7 +476,8 @@ async function loadRanking() {
 // ── Paramètres ─────────────────────────────────────────────────────────────────
 document.querySelectorAll('[data-diag]').forEach(b => b.addEventListener('click', async () => {
   el('diag-result').textContent = 'Test en cours…';
-  const r = await api('GET', `/api/admin/diag/${b.dataset.diag}`);
+  const dm = b.dataset.diag === 'discord' ? el('diag-dm').value.trim() : '';
+  const r = await api('GET', `/api/admin/diag/${b.dataset.diag}${dm ? '?dm=' + encodeURIComponent(dm) : ''}`);
   el('diag-result').textContent = r.message || JSON.stringify(r);
 }));
 el('pwd-form').addEventListener('submit', async e => {
