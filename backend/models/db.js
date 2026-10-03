@@ -161,6 +161,37 @@ function initDb() {
     // Message Discord (salon admin) associé à une demande de validation, pour le mettre à jour
     if (!hasCol('user_challenges', 'discord_msg_id')) db.run('ALTER TABLE user_challenges ADD COLUMN discord_msg_id TEXT');
 
+    // Giveaways
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS giveaways (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', prize TEXT NOT NULL DEFAULT '',
+        image_url TEXT, starts_at TEXT NOT NULL, ends_at TEXT NOT NULL,
+        winners_count INTEGER NOT NULL DEFAULT 1,
+        conditions TEXT NOT NULL DEFAULT '{}',
+        ticket_cost INTEGER NOT NULL DEFAULT 0, max_bought INTEGER NOT NULL DEFAULT 0,
+        bonus_per_challenge INTEGER NOT NULL DEFAULT 0, max_challenge_bonus INTEGER NOT NULL DEFAULT 0,
+        rank_bonus INTEGER NOT NULL DEFAULT 1,
+        status TEXT NOT NULL DEFAULT 'active',
+        drawn_at TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE TABLE IF NOT EXISTS giveaway_entries (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        giveaway_id INTEGER NOT NULL REFERENCES giveaways(id),
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        bought INTEGER NOT NULL DEFAULT 0, spent INTEGER NOT NULL DEFAULT 0,
+        joined_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(giveaway_id, user_id)
+      );
+      CREATE TABLE IF NOT EXISTS giveaway_winners (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        giveaway_id INTEGER NOT NULL REFERENCES giveaways(id),
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        rank INTEGER NOT NULL DEFAULT 1,
+        drawn_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+    `);
+
     // Doublons user_challenges (même user / challenge / période) → on garde la ligne validée la plus ancienne
     db.run(`DELETE FROM user_challenges WHERE id IN (
       SELECT a.id FROM user_challenges a JOIN user_challenges b

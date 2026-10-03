@@ -78,6 +78,7 @@
       <button class="nav-link" data-page="pending">Validations <span class="nav-badge hidden" id="pending-badge"></span></button>
       <button class="nav-link" data-page="users">Membres</button>
       <button class="nav-link" data-page="challenges">Challenges</button>
+      <button class="nav-link" data-page="giveaways">Giveaways</button>
       <button class="nav-link" data-page="shop">Boutique <span class="nav-badge hidden" id="orders-badge"></span></button>
       <button class="nav-link" data-page="codes">Codes</button>
       <button class="nav-link" data-page="ranking">Live</button>
@@ -157,6 +158,18 @@
     <div class="card"><table class="tbl">
       <thead><tr><th>Plateforme</th><th>Nom / type</th><th>Points</th><th>Période</th><th>Validations</th><th>Statut</th><th></th></tr></thead>
       <tbody id="challenges-tbl"></tbody>
+    </table></div>
+  </section>
+
+  <!-- GIVEAWAYS -->
+  <section class="apage" id="page-giveaways">
+    <div class="toolbar" style="justify-content:space-between">
+      <div><div class="h1">Giveaways</div><p class="lead" style="margin:0">Tirage automatique à la date de fin (pondéré par les tickets), annonce sur Discord.</p></div>
+      <button class="btn-primary sm" id="btn-new-gw">+ Nouveau giveaway</button>
+    </div>
+    <div class="card"><table class="tbl">
+      <thead><tr><th>Giveaway</th><th>Statut</th><th>Fin</th><th>Participants</th><th>Tickets</th><th>Gagnant(s)</th><th></th></tr></thead>
+      <tbody id="gw-tbl"></tbody>
     </table></div>
   </section>
 

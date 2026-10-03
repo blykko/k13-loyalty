@@ -83,7 +83,15 @@ initDb().then(() => {
   };
   app.get('/', sendIndex);
   app.get('/leaderboard', (_, res) => res.sendFile(path.join(PUBLIC, 'leaderboard.html')));
-  app.use(express.static(PUBLIC, { index: false, maxAge: isProduction ? '1h' : 0 }));
+  // JS/CSS/HTML : le navigateur revalide à chaque chargement (ETag → 304 si inchangé),
+  // sinon après une mise à jour il mélange une page neuve avec un ancien script.
+  // Images : cache 1 jour.
+  app.use(express.static(PUBLIC, {
+    index: false,
+    setHeaders: (res, file) => {
+      res.setHeader('Cache-Control', /\.(js|css|html)$/.test(file) ? 'no-cache' : (isProduction ? 'public, max-age=86400' : 'no-cache'));
+    },
+  }));
   app.use('/auth',      require('./routes/auth'));
   app.use('/api/user',  require('./routes/user'));
   app.use('/api/admin', require('./routes/admin'));
@@ -98,6 +106,11 @@ initDb().then(() => {
     const status = err.status || (err.code === 'LIMIT_FILE_SIZE' ? 413 : 500);
     res.status(status).json({ ok: false, message: err.code === 'LIMIT_FILE_SIZE' ? 'Fichier trop lourd (8 Mo max).' : 'Erreur serveur.' });
   });
+
+  // Tirage automatique des giveaways arrivés à échéance
+  const giveaways = require('./services/giveaways');
+  setInterval(() => giveaways.tick(), 30_000);
+  setTimeout(() => giveaways.tick(), 5_000);
 
   discordBot.startBot();
   const server = app.listen(PORT, () => {

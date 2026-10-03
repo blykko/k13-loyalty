@@ -195,4 +195,52 @@ async function diagnose(testDiscordId) {
   return out;
 }
 
-module.exports = { ready, deletePendingMessage, postMissingPending, diagnose, siteUrl, dmUser, announceChallenge, notifyResult, sendPendingToAdmins, resolvePendingMessage };
+// ── Giveaways ──────────────────────────────────────────────────────────────────
+// Salon public des annonces (DISCORD_GIVEAWAY_CHANNEL_ID), sinon pas d'annonce publique
+async function postToGiveawayChannel(payload) {
+  const id = process.env.DISCORD_GIVEAWAY_CHANNEL_ID;
+  if (!ready() || !id) return null;
+  try { return await (await client().channels.fetch(id)).send(payload); }
+  catch (e) { console.warn('[Notify] salon giveaway:', e.message); return null; }
+}
+
+const ts = iso => `<t:${Math.floor(new Date(iso.replace(' ', 'T') + (iso.includes('Z') ? '' : 'Z')).getTime() / 1000)}:R>`;
+
+// Nouveau giveaway : annonce publique + MP optionnel aux membres
+async function announceGiveaway(g, { dm = false } = {}) {
+  const embed = new EmbedBuilder()
+    .setColor(0xF59E0B)
+    .setTitle(`🎁 GIVEAWAY : ${g.title}`)
+    .setDescription(`**À gagner : ${g.prize}**\n${g.description || ''}\n\nFin du tirage ${ts(g.ends_at)} · ${g.winners_count} gagnant(s)\n👉 Participe sur le site K13 Loyalty !`)
+    .setFooter({ text: 'Plus de tickets = plus de chances : rang, défis validés, tickets bonus' });
+  if (siteUrl()) embed.setURL(`${siteUrl()}/#giveaways`);
+  if (g.image_url) embed.setImage(g.image_url);
+  await postToGiveawayChannel({ embeds: [embed] });
+  let n = 0;
+  if (dm) for (const u of dbAll('SELECT discord_id FROM users WHERE notify_dm=1 AND discord_id IS NOT NULL')) { queueDm(u.discord_id, { embeds: [embed] }); n++; }
+  return n;
+}
+
+// Gagnants : annonce publique (mentions) + MP aux gagnants
+async function announceGiveawayWinners(g, winners, { reroll = false } = {}) {
+  const names = winners.map(w => w.discord_id ? `<@${w.discord_id}>` : (w.discord_username || w.username));
+  const embed = new EmbedBuilder()
+    .setColor(winners.length ? 0x059669 : 0x6B7280)
+    .setTitle(`${reroll ? '🔁 Nouveau tirage' : '🎉 Résultat du giveaway'} : ${g.title}`)
+    .setDescription(winners.length
+      ? `Félicitations à ${names.join(', ')} qui remporte **${g.prize}** !`
+      : 'Aucun participant éligible, pas de gagnant cette fois.');
+  if (siteUrl()) embed.setURL(`${siteUrl()}/#giveaways`);
+  await postToGiveawayChannel({ content: names.join(' ') || undefined, embeds: [embed],
+    allowedMentions: { users: winners.map(w => w.discord_id).filter(Boolean) } });
+  for (const w of winners) {
+    if (!w.discord_id) continue;
+    // Le MP au gagnant est envoyé même si les notifications sont coupées
+    queueDm(w.discord_id, { embeds: [new EmbedBuilder().setColor(0x059669)
+      .setTitle(`🏆 Tu as gagné le giveaway « ${g.title} » !`)
+      .setDescription(`Tu remportes **${g.prize}**. L'équipe K13 va te contacter pour te remettre ton lot.`)] });
+  }
+}
+
+module.exports = { ready, deletePendingMessage, postMissingPending, diagnose, siteUrl, dmUser, announceChallenge, notifyResult, sendPendingToAdmins, resolvePendingMessage,
+  announceGiveaway, announceGiveawayWinners };
