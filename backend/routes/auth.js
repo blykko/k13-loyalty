@@ -49,6 +49,8 @@ router.get('/discord/callback', async (req, res) => {
         [username, dUser.id, displayName, dUser.avatar, tokens.access_token, tokens.refresh_token]);
       user = dbGet('SELECT * FROM users WHERE id=?', [r.lastInsertRowid]);
       if (!user) throw new Error('Utilisateur créé mais introuvable en base');
+      // Bonus de bienvenue + rattachement au parrain éventuel
+      require('../services/loyalty').onSignup(user.id, req.session.ref);
     } else {
       dbRun("UPDATE users SET discord_token=?,discord_refresh=?,discord_avatar=?,discord_username=?,last_seen=datetime('now') WHERE id=?",
         [tokens.access_token, tokens.refresh_token, dUser.avatar, displayName, user.id]);
@@ -135,6 +137,7 @@ router.get('/twitter/callback', requireUser, async (req, res) => {
       return res.redirect('/?error=twitter_already_linked');
     dbRun('UPDATE users SET twitter_id=?, twitter_username=? WHERE id=?', [tUser.id, tUser.username, req.session.userId]);
     twitter.saveTokens(req.session.userId, tokens);
+    require('../services/loyalty').afterEvent(req.session.userId, 'link');
     req.session.save(() => res.redirect('/?linked=twitter'));
   } catch (e) {
     console.error('[Twitter OAuth]', e.message);

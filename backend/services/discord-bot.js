@@ -73,6 +73,7 @@ function startBot() {
   client.once(Events.ClientReady, async c => {
     console.log(`[Bot Discord] Connecté en tant que ${c.user.tag}`);
     if (!process.env.DISCORD_ADMIN_CHANNEL_ID) console.warn('[Bot Discord] DISCORD_ADMIN_CHANNEL_ID non défini : pas de validations sur Discord');
+    require('./discord-commands').register(c).catch(() => {});
     // Demandes créées pendant que le bot était hors ligne
     setTimeout(() => require('./notify').postMissingPending().catch(e => console.warn('[Notify]', e.message)), 3000);
     vocalInterval = setInterval(() => {
@@ -156,6 +157,8 @@ function startBot() {
 
   // ── Boutons Accepter / Refuser du salon admin ─────────────────────────────
   client.on(Events.InteractionCreate, async interaction => {
+    // Commandes slash (/daily, /points, jeux…) et boutons du blackjack
+    if (await require('./discord-commands').handle(interaction)) return;
     if (!interaction.isButton()) return;
     const m = interaction.customId.match(/^k13:(approve|reject):(\d+)$/);
     if (!m) return;

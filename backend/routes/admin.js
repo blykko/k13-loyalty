@@ -60,6 +60,8 @@ router.get('/stats/detailed', (req, res) => {
     botConfigured: notify.ready(),
     adminChannelConfigured: !!process.env.DISCORD_ADMIN_CHANNEL_ID,
     twitterConfigured: twitterSvc.isConfigured(),
+    games: require('../services/games').houseStats(),
+    dailyToday: dbGet("SELECT COUNT(*) AS c FROM points_log WHERE reason='daily' AND label LIKE 'Bonus quotidien%' AND created_at>=?", [T.toSql(T.periodStart(T.DAY))]).c,
   });
 });
 
@@ -106,6 +108,7 @@ router.post('/users/:id/points', (req, res) => {
   const user = dbGet('SELECT points FROM users WHERE id=?', [id]);
   if (!user) return res.status(404).json({ ok: false, message: 'Membre introuvable.' });
   dbRun('UPDATE users SET points=MAX(0,points+?), lifetime_points=MAX(0,lifetime_points+?) WHERE id=?', [delta, delta, id]);
+  require('../services/challenges').logPoints(id, delta, 'admin', req.body?.reason || 'Ajustement admin');
   updateRank(id);
   const newPts = dbGet('SELECT points FROM users WHERE id=?', [id]).points;
   res.json({ ok: true, message: `${delta > 0 ? '+' + delta : delta} pts. Nouveau total : ${newPts}`, newPoints: newPts });
@@ -286,73 +289,6 @@ router.post('/orders/:id/complete', (req, res) => {
   const r = dbRun("UPDATE shop_orders SET status='completed' WHERE id=? AND status='pending'", [int(req.params.id)]);
   res.json(r.changes ? { ok: true, message: 'Commande marquée traitée.' } : { ok: false, message: 'Commande introuvable ou déjà traitée.' });
 });
-
-// ── Giveaways ──────────────────────────────────────────────────────────────────
-const giveaways = require('../services/giveaways');
-
-function giveawayFields(b) {
-  const g = {
-    title: String(b.title || '').trim(), prize: String(b.prize || '').trim(),
-    description: String(b.description || '').trim(), image_url: b.image_url ? String(b.image_url).trim() : null,
-    winners_count: Math.max(1, Math.min(int(b.winners_count) || 1, 50)),
-    ticket_cost: Math.max(0, int(b.ticket_cost) || 0), max_bought: Math.max(0, int(b.max_bought) || 0),
-    bonus_per_challenge: Math.max(0, int(b.bonus_per_challenge) || 0), max_challenge_bonus: Math.max(0, int(b.max_challenge_bonus) || 0),
-    rank_bonus: b.rank_bonus ? 1 : 0,
-  };
-  const start = new Date(b.starts_at || Date.now()), end = new Date(b.ends_at);
-  if (!g.title || !g.prize) return { error: 'Titre et lot requis.' };
-  if (isNaN(start) || isNaN(end) || end <= start) return { error: 'Dates invalides (la fin doit être après le début).' };
-  if (g.image_url && !/^https?:\/\//i.test(g.image_url)) return { error: 'URL d\'image invalide.' };
-  g.starts_at = T.toSql(start); g.ends_at = T.toSql(end);
-  const c = b.conditions || {};
-  g.conditions = JSON.stringify({
-    min_rank: ['silver', 'gold'].includes(c.min_rank) ? c.min_rank : null,
-    min_lifetime_points: Math.max(0, int(c.min_lifetime_points) || 0),
-    min_account_days: Math.max(0, int(c.min_account_days) || 0),
-    discord_member: !!c.discord_member, twitch_linked: !!c.twitch_linked, twitter_linked: !!c.twitter_linked,
-    challenges: (Array.isArray(c.challenges) ? c.challenges : []).map(int).filter(Boolean),
-  });
-  return { g };
-}
-
-router.get('/giveaways', (req, res) => {
-  const list = dbAll("SELECT * FROM giveaways ORDER BY (status='active') DESC, ends_at DESC LIMIT 100");
-  res.json({ ok: true, giveaways: list.map(g => ({ ...giveaways.publicGiveaway(g), conditions: JSON.parse(g.conditions || '{}'),
-    raw_status: g.status, starts_at_sql: g.starts_at })) });
-});
-router.post('/giveaways', async (req, res) => {
-  const { g, error } = giveawayFields(req.body || {});
-  if (error) return res.status(400).json({ ok: false, message: error });
-  const cols = Object.keys(g);
-  const r = dbRun(`INSERT INTO giveaways (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')})`, cols.map(k => g[k]));
-  const created = dbGet('SELECT * FROM giveaways WHERE id=?', [r.lastInsertRowid]);
-  let message = 'Giveaway créé.';
-  if (notify.ready()) {
-    const n = await notify.announceGiveaway(created, { dm: !!req.body.notify }).catch(() => 0);
-    if (req.body.notify) message += ` MP envoyé à ${n} membre(s).`;
-  }
-  res.json({ ok: true, message });
-});
-router.patch('/giveaways/:id', (req, res) => {
-  const cur = dbGet('SELECT * FROM giveaways WHERE id=?', [int(req.params.id)]);
-  if (!cur || cur.status !== 'active') return res.status(400).json({ ok: false, message: 'Seul un giveaway en cours peut être modifié.' });
-  const { g, error } = giveawayFields(req.body || {});
-  if (error) return res.status(400).json({ ok: false, message: error });
-  const cols = Object.keys(g);
-  dbRun(`UPDATE giveaways SET ${cols.map(c => c + '=?').join(',')} WHERE id=?`, [...cols.map(k => g[k]), cur.id]);
-  res.json({ ok: true, message: 'Giveaway mis à jour.' });
-});
-router.get('/giveaways/:id/entries', (req, res) => {
-  const g = dbGet('SELECT * FROM giveaways WHERE id=?', [int(req.params.id)]);
-  if (!g) return res.status(404).json({ ok: false, message: 'Introuvable.' });
-  const entries = dbAll(`SELECT e.*, u.username, u.discord_username, u.rank FROM giveaway_entries e JOIN users u ON u.id=e.user_id
-    WHERE e.giveaway_id=? ORDER BY e.joined_at`, [g.id])
-    .map(e => ({ username: e.discord_username || e.username, joined_at: e.joined_at, tickets: giveaways.ticketsFor(g, { id: e.user_id, rank: e.rank }, e) }));
-  res.json({ ok: true, entries, winners: giveaways.winnersOf(g.id) });
-});
-router.post('/giveaways/:id/draw', async (req, res) => res.json(await giveaways.draw(int(req.params.id))));
-router.post('/giveaways/:id/reroll', async (req, res) => res.json(await giveaways.draw(int(req.params.id), { reroll: true })));
-router.post('/giveaways/:id/cancel', (req, res) => res.json(giveaways.cancel(int(req.params.id))));
 
 // ── Resets ─────────────────────────────────────────────────────────────────────
 // Remet à zéro les compteurs d'activité (les compteurs SE repartent du cumul actuel)

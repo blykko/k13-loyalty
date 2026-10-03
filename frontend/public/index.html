@@ -43,14 +43,14 @@
     <div class="nav-links" role="tablist">
       <button class="nav-link active" data-page="dashboard"><span class="nl-ico">🏠</span><span>Accueil</span></button>
       <button class="nav-link" data-page="challenges"><span class="nl-ico">🎯</span><span>Défis</span><span class="nav-badge hidden" id="nav-badge"></span></button>
-      <button class="nav-link" data-page="giveaways"><span class="nl-ico">🎁</span><span>Giveaways</span><span class="nav-badge hidden" id="gw-badge"></span></button>
+      <button class="nav-link" data-page="games"><span class="nl-ico">🎲</span><span>Jeux</span></button>
       <button class="nav-link" data-page="shop"><span class="nl-ico">🛒</span><span>Boutique</span></button>
       <a class="nav-link" href="/leaderboard"><span class="nl-ico">🏆</span><span>Classement</span></a>
     </div>
     <div class="nav-right">
       <button class="icon-btn" id="btn-dark" title="Mode sombre" aria-label="Mode sombre">🌙</button>
       <div class="pts-chip" id="nav-pts">0 pts</div>
-      <div class="nav-avatar" id="nav-avatar"><span>?</span></div>
+      <button class="nav-avatar" id="nav-avatar" data-page="profile" title="Mon profil" aria-label="Mon profil"><span>?</span></button>
       <button class="icon-btn" id="btn-logout" title="Se déconnecter" aria-label="Se déconnecter">⎋</button>
     </div>
   </nav>
@@ -72,6 +72,23 @@
       </div>
     </div>
 
+    <!-- Bonus quotidien + premiers pas -->
+    <div class="loyal-row">
+      <div class="daily-card" id="daily-card">
+        <div class="daily-flame" id="daily-flame">🔥</div>
+        <div class="daily-body">
+          <div class="daily-title" id="daily-title">Série de 0 jour</div>
+          <div class="daily-sub" id="daily-sub">Reviens chaque jour pour faire grimper ton bonus.</div>
+          <div class="daily-week" id="daily-week"></div>
+        </div>
+        <button class="btn-daily" id="btn-daily">🎁 Récupérer</button>
+      </div>
+      <div class="onboard-card hidden" id="onboard-card">
+        <div class="onboard-head"><strong>🚀 Premiers pas</strong><span id="onboard-count"></span></div>
+        <ul class="onboard-list" id="onboard-list"></ul>
+      </div>
+    </div>
+
     <div id="live-bar" class="live-bar hidden">
       <div class="live-dot"></div>
       <div class="live-info"><strong>K13 est en live 🔴</strong> <span id="live-text"></span></div>
@@ -88,7 +105,6 @@
 
     <div class="section-title">Comptes liés</div>
     <div class="accounts-row" id="accounts-row"></div>
-    <label class="switch notify-switch"><input type="checkbox" id="notify-dm"/><span>🔔 Recevoir les nouveaux défis et les résultats de validation en MP Discord</span></label>
     <form id="epic-form" class="epic-inline hidden">
       <input class="input" id="epic-username" placeholder="Pseudo Epic Games" maxlength="64" required/>
       <input class="input" id="epic-code" placeholder="Code créateur utilisé (optionnel)" maxlength="64"/>
@@ -111,20 +127,96 @@
     <div id="challenges-sections"></div>
   </main>
 
-  <!-- SHOP -->
-  <main class="page" id="page-giveaways">
+  <!-- JEUX -->
+  <main class="page" id="page-games">
     <div class="page-head">
-      <h1 class="page-title">Giveaways</h1>
-      <span class="section-sub">Plus tu as de tickets, plus tu as de chances de gagner 🍀</span>
+      <h1 class="page-title">Jeux</h1>
+      <div class="pts-chip lg" id="games-pts">0 pts</div>
     </div>
-    <div id="gw-list" class="gw-list"></div>
-    <div class="gw-howto">
-      <strong>Comment gagner plus de tickets ?</strong>
-      <span>🎟️ 1 ticket en participant</span><span>🥈 +1 ticket Silver · 🥇 +2 tickets Gold</span>
-      <span>🎯 Tickets bonus pour chaque défi validé pendant le giveaway</span><span>⭐ Tickets en plus contre des points</span>
+    <div class="games-info" id="games-info"></div>
+    <div class="games-grid">
+      <!-- Pile ou face -->
+      <section class="game-card">
+        <div class="game-head"><span class="game-ico">🪙</span><div><h2>Pile ou face</h2><p>Gain ×1,9</p></div></div>
+        <div class="coin" id="coin"><div class="coin-face">P</div></div>
+        <div class="bet-row" data-game="coin"></div>
+        <div class="choice-row">
+          <button class="btn-choice" data-action="coin" data-choice="pile">Pile</button>
+          <button class="btn-choice" data-action="coin" data-choice="face">Face</button>
+        </div>
+        <div class="game-result" id="coin-result"></div>
+      </section>
+      <!-- Roulette -->
+      <section class="game-card">
+        <div class="game-head"><span class="game-ico">🎡</span><div><h2>Roulette</h2><p>Européenne, un seul zéro</p></div></div>
+        <div class="wheel" id="wheel"><span id="wheel-num">0</span></div>
+        <div class="bet-row" data-game="roulette"></div>
+        <div class="choice-row wrap">
+          <button class="btn-choice red" data-action="roulette" data-type="rouge">Rouge ×2</button>
+          <button class="btn-choice black" data-action="roulette" data-type="noir">Noir ×2</button>
+          <button class="btn-choice" data-action="roulette" data-type="pair">Pair ×2</button>
+          <button class="btn-choice" data-action="roulette" data-type="impair">Impair ×2</button>
+          <button class="btn-choice" data-action="roulette" data-type="manque">1-18 ×2</button>
+          <button class="btn-choice" data-action="roulette" data-type="passe">19-36 ×2</button>
+          <button class="btn-choice" data-action="roulette" data-type="douzaine" data-value="1">1-12 ×3</button>
+          <button class="btn-choice" data-action="roulette" data-type="douzaine" data-value="2">13-24 ×3</button>
+          <button class="btn-choice" data-action="roulette" data-type="douzaine" data-value="3">25-36 ×3</button>
+        </div>
+        <div class="number-row"><input class="input" type="number" id="roulette-number" min="0" max="36" placeholder="N° 0-36"/><button class="btn-choice gold" data-action="roulette" data-type="numero">Numéro ×36</button></div>
+        <div class="game-result" id="roulette-result"></div>
+      </section>
+      <!-- Blackjack -->
+      <section class="game-card wide">
+        <div class="game-head"><span class="game-ico">🃏</span><div><h2>Blackjack</h2><p>Croupier à 17 · Blackjack payé 3:2</p></div></div>
+        <div class="bj-table">
+          <div class="bj-hand"><div class="bj-label">Croupier <span id="bj-dealer-val"></span></div><div class="bj-cards" id="bj-dealer"></div></div>
+          <div class="bj-hand"><div class="bj-label">Toi <span id="bj-player-val"></span></div><div class="bj-cards" id="bj-player"></div></div>
+        </div>
+        <div class="bet-row" data-game="bj" id="bj-bet"></div>
+        <div class="choice-row" id="bj-start-row"><button class="btn-primary" data-action="bj-start">Distribuer</button></div>
+        <div class="choice-row hidden" id="bj-actions">
+          <button class="btn-choice" data-action="bj" data-move="hit">Tirer</button>
+          <button class="btn-choice" data-action="bj" data-move="stand">Rester</button>
+          <button class="btn-choice gold" data-action="bj" data-move="double" id="bj-double">Doubler</button>
+        </div>
+        <div class="game-result" id="bj-result"></div>
+      </section>
+    </div>
+    <p class="games-legal">Jeu à points virtuels uniquement : les points ne s'achètent pas et n'ont aucune valeur en argent. Les gains des jeux ne comptent ni pour ton rang ni pour le classement. Tu peux désactiver les jeux depuis ton profil.</p>
+  </main>
+
+  <!-- PROFIL -->
+  <main class="page" id="page-profile">
+    <div class="page-head"><h1 class="page-title">Mon profil</h1></div>
+    <div class="profile-grid">
+      <div class="card">
+        <div class="section-title" style="margin-top:0">🤝 Parrainage</div>
+        <p class="muted" id="ref-desc"></p>
+        <div class="ref-box"><input class="input" id="ref-link" readonly/><button class="btn-primary sm" data-action="copy-ref">Copier</button></div>
+        <div class="muted" id="ref-count" style="margin-top:8px"></div>
+      </div>
+      <div class="card">
+        <div class="section-title" style="margin-top:0">🏆 Mes classements</div>
+        <div class="rank-pos" id="rank-pos"></div>
+        <a href="/leaderboard" class="btn-ghost sm" style="display:inline-block;margin-top:10px">Voir le classement →</a>
+      </div>
+    </div>
+    <div class="section-title">🏅 Badges <span class="section-sub" id="badge-count"></span></div>
+    <div class="badges-grid" id="badges-grid"></div>
+    <div class="section-title">📜 Historique des points</div>
+    <div class="card"><table class="tbl"><tbody id="history-body"></tbody></table></div>
+    <div class="section-title">⚙️ Paramètres</div>
+    <div class="card settings">
+      <label class="switch"><input type="checkbox" id="notify-dm"/><span>🔔 Recevoir les nouveaux défis et les résultats de validation en MP Discord</span></label>
+      <label class="switch"><input type="checkbox" id="games-off"/><span>🚫 Désactiver les jeux pour mon compte</span></label>
+      <div class="settings-actions">
+        <a class="btn-ghost sm" href="/api/user/export" download>📦 Télécharger mes données</a>
+        <button class="btn-ghost sm danger-txt" data-action="delete-account">🗑️ Supprimer mon compte</button>
+      </div>
     </div>
   </main>
 
+  <!-- SHOP -->
   <main class="page" id="page-shop">
     <div class="page-head">
       <h1 class="page-title">Boutique</h1>
@@ -165,17 +257,6 @@
     </form>
     <button class="btn-primary full hidden" id="btn-modal-confirm"></button>
     <button class="btn-ghost full" id="btn-modal-close">Fermer</button>
-  </div>
-</div>
-
-<!-- Tirage animé -->
-<div id="gw-reveal" class="modal-overlay hidden">
-  <div class="modal gw-reveal">
-    <div class="modal-icon">🎁</div>
-    <div class="modal-title" id="gwr-title">Tirage</div>
-    <div class="gwr-wheel"><div class="gwr-name" id="gwr-name">…</div></div>
-    <div class="modal-desc" id="gwr-desc"></div>
-    <button class="btn-primary full hidden" id="gwr-close">Fermer</button>
   </div>
 </div>
 

@@ -161,34 +161,31 @@ function initDb() {
     // Message Discord (salon admin) associé à une demande de validation, pour le mettre à jour
     if (!hasCol('user_challenges', 'discord_msg_id')) db.run('ALTER TABLE user_challenges ADD COLUMN discord_msg_id TEXT');
 
-    // Giveaways
+    // Fidélisation : série quotidienne, parrainage, jeux
+    for (const [col, def] of [['streak', 'INTEGER NOT NULL DEFAULT 0'], ['best_streak', 'INTEGER NOT NULL DEFAULT 0'], ['last_daily', 'TEXT'],
+      ['ref_code', 'TEXT'], ['referred_by', 'INTEGER'], ['referral_rewarded', 'INTEGER NOT NULL DEFAULT 0'],
+      ['games_disabled', 'INTEGER NOT NULL DEFAULT 0']]) {
+      if (!hasCol('users', col)) db.run(`ALTER TABLE users ADD COLUMN ${col} ${def}`);
+    }
+    db.run('CREATE UNIQUE INDEX IF NOT EXISTS ux_users_ref ON users(ref_code) WHERE ref_code IS NOT NULL');
     db.exec(`
-      CREATE TABLE IF NOT EXISTS giveaways (
+      -- Historique de tous les mouvements de points (classement du mois, historique membre)
+      CREATE TABLE IF NOT EXISTS points_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', prize TEXT NOT NULL DEFAULT '',
-        image_url TEXT, starts_at TEXT NOT NULL, ends_at TEXT NOT NULL,
-        winners_count INTEGER NOT NULL DEFAULT 1,
-        conditions TEXT NOT NULL DEFAULT '{}',
-        ticket_cost INTEGER NOT NULL DEFAULT 0, max_bought INTEGER NOT NULL DEFAULT 0,
-        bonus_per_challenge INTEGER NOT NULL DEFAULT 0, max_challenge_bonus INTEGER NOT NULL DEFAULT 0,
-        rank_bonus INTEGER NOT NULL DEFAULT 1,
-        status TEXT NOT NULL DEFAULT 'active',
-        drawn_at TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        user_id INTEGER NOT NULL, delta INTEGER NOT NULL,
+        reason TEXT NOT NULL, label TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
-      CREATE TABLE IF NOT EXISTS giveaway_entries (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        giveaway_id INTEGER NOT NULL REFERENCES giveaways(id),
-        user_id INTEGER NOT NULL REFERENCES users(id),
-        bought INTEGER NOT NULL DEFAULT 0, spent INTEGER NOT NULL DEFAULT 0,
-        joined_at TEXT NOT NULL DEFAULT (datetime('now')),
-        UNIQUE(giveaway_id, user_id)
+      CREATE INDEX IF NOT EXISTS ix_points_log_user ON points_log(user_id, created_at);
+      CREATE INDEX IF NOT EXISTS ix_points_log_date ON points_log(created_at, reason);
+      CREATE TABLE IF NOT EXISTS user_badges (
+        user_id INTEGER NOT NULL, badge TEXT NOT NULL,
+        unlocked_at TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (user_id, badge)
       );
-      CREATE TABLE IF NOT EXISTS giveaway_winners (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        giveaway_id INTEGER NOT NULL REFERENCES giveaways(id),
-        user_id INTEGER NOT NULL REFERENCES users(id),
-        rank INTEGER NOT NULL DEFAULT 1,
-        drawn_at TEXT NOT NULL DEFAULT (datetime('now'))
+      CREATE TABLE IF NOT EXISTS blackjack_games (
+        user_id INTEGER PRIMARY KEY, bet INTEGER NOT NULL, state TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
     `);
 
@@ -262,4 +259,14 @@ function dbAll(sql,p=[]){const r=getDb().exec(sql,p);if(!r.length)return[];retur
 function dbRun(sql,p=[]){getDb().run(sql,p);const m=getDb().exec('SELECT last_insert_rowid() AS id,changes() AS ch');getDb()._persist();return m.length?{lastInsertRowid:m[0].values[0][0],changes:m[0].values[0][1]}:{lastInsertRowid:0,changes:0}}
 // Force l'écriture immédiate (arrêt du serveur)
 function dbFlush(){ if(_db) _db._persistNow(); }
-module.exports={initDb,dbGet,dbAll,dbRun,dbFlush};
+// Sauvegarde quotidienne dans data/backups (14 jours conservés).
+// ⚠️ Copier aussi ce dossier hors du VPS (ex. rclone, rsync) pour se protéger d'une panne disque.
+function dbBackup(keep=14){
+  if(!_db) return;
+  const dir=path.join(path.dirname(DB_PATH),'backups'); fs.mkdirSync(dir,{recursive:true});
+  const file=path.join(dir,`k13-${new Date().toISOString().slice(0,10)}.db`);
+  fs.writeFileSync(file,Buffer.from(_db.export()));
+  fs.readdirSync(dir).filter(f=>/^k13-\d{4}-\d{2}-\d{2}\.db$/.test(f)).sort().slice(0,-keep).forEach(f=>fs.unlinkSync(path.join(dir,f)));
+  return file;
+}
+module.exports={initDb,dbGet,dbAll,dbRun,dbFlush,dbBackup};

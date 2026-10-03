@@ -285,46 +285,101 @@ button:disabled{cursor:not-allowed}
 .notify-switch{margin:4px 0 14px;font-size:12.5px}
 @media(max-width:600px){.ch-btns{justify-content:stretch}.ch-btns .btn-ch{flex:1;text-align:center}}
 
-/* ── Giveaways ───────────────────────────────────────────────────────────────── */
-.gw-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px;margin-bottom:22px}
-.gw-card{background:var(--white);border:1px solid var(--border);border-radius:var(--r-xl);overflow:hidden;box-shadow:var(--sh);display:flex;flex-direction:column}
-.gw-card.open{border-color:#FCD34D;box-shadow:0 0 0 1px #FCD34D,var(--sh-md)}
-.gw-card.won{border-color:var(--green);box-shadow:0 0 0 2px var(--green-b)}
-.gw-img{height:150px;background:linear-gradient(135deg,#F59E0B,#EF4444) center/cover no-repeat}
-.gw-img-ph{display:flex;align-items:center;justify-content:center;font-size:56px}
-.gw-body{padding:16px 18px 18px;display:flex;flex-direction:column;gap:8px;flex:1}
-.gw-top{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:12px}
-.gw-status{font-weight:700;padding:2px 9px;border-radius:20px;background:var(--bg);color:var(--t2)}
-.gw-status.open{background:var(--green-bg);color:var(--green)}
-.gw-status.upcoming{background:var(--blue-l);color:var(--blue)}
-.gw-status.drawing{background:var(--amber-bg);color:var(--amber)}
-.gw-countdown{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-weight:700;color:var(--text)}
-.gw-title{font-family:'Sora',sans-serif;font-size:18px;font-weight:800;line-height:1.25}
-.gw-prize{font-weight:700;color:var(--amber)}
-.gw-desc{font-size:13px;color:var(--t2)}
-.gw-stats{display:flex;gap:14px;font-size:12px;color:var(--t2)}
-.gw-sub{font-size:12px;font-weight:700;color:var(--t2);text-transform:uppercase;letter-spacing:.4px;margin-top:4px}
-.gw-conds{list-style:none;display:flex;flex-direction:column;gap:4px;font-size:13px}
-.gw-conds li.ko{color:var(--t2)}
-.gw-card .btn-primary.full{margin:6px 0 0}
-.gw-mine{background:var(--surface2);border:1px solid var(--border);border-radius:var(--r);padding:12px;display:flex;flex-direction:column;gap:6px;margin-top:4px}
-.gw-tickets{display:flex;align-items:baseline;gap:6px;font-weight:600;flex-wrap:wrap}
-.gw-tk-num{font-family:'Sora',sans-serif;font-size:26px;font-weight:800;color:var(--blue)}
-.gw-chance{margin-left:auto;font-size:12px;font-weight:700;color:var(--green);background:var(--green-bg);padding:2px 9px;border-radius:20px}
-.gw-breakdown,.gw-hint{font-size:12px;color:var(--t2)}
-.gw-hint a{color:var(--blue);font-weight:600}
-.gw-buy{display:flex;gap:6px}
-.gw-buy .input{flex:1;min-width:0}
-.gw-winners{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
-.gw-winner{background:var(--amber-bg);color:var(--amber);font-weight:700;font-size:13px;padding:4px 11px;border-radius:20px}
-.gw-winner.me{background:var(--green-bg);color:var(--green)}
-.gw-won{font-weight:700;color:var(--green)}
-.gw-howto{display:flex;flex-wrap:wrap;gap:8px 14px;background:var(--white);border:1px dashed var(--border2);border-radius:var(--r-lg);padding:14px 16px;font-size:13px;color:var(--t2)}
-.gw-howto strong{flex-basis:100%;color:var(--text)}
-.gw-reveal .gwr-wheel{margin:10px 0 14px;padding:22px 10px;border-radius:var(--r-lg);background:linear-gradient(135deg,#F59E0B,#EF4444);overflow:hidden}
-.gwr-name{font-family:'Sora',sans-serif;font-size:24px;font-weight:800;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.gwr-name.final{animation:gwpop .5s ease}
-@keyframes gwpop{0%{transform:scale(.6)}60%{transform:scale(1.2)}100%{transform:scale(1)}}
+/* ── Confettis ──────────────────────────────────────────────────────────────── */
 .confetti{position:fixed;top:-12px;width:9px;height:14px;z-index:400;border-radius:2px;pointer-events:none;animation:fall 3s ease-in forwards}
 @keyframes fall{to{top:105vh;transform:rotate(720deg) translateX(40px)}}
-@media(max-width:600px){.gw-list{grid-template-columns:1fr}.nav-link{padding:4px 6px}}
+@media(max-width:600px){.nav-link{padding:4px 6px}}
+
+/* ── Bonus quotidien & premiers pas ──────────────────────────────────────────── */
+.loyal-row{display:grid;grid-template-columns:1fr;gap:12px;margin-bottom:16px}
+.loyal-row:has(.onboard-card:not(.hidden)){grid-template-columns:1.4fr 1fr}
+.daily-card{display:flex;align-items:center;gap:14px;background:linear-gradient(135deg,#FFF7ED,var(--white));border:1px solid #FED7AA;border-radius:var(--r-lg);padding:14px 16px;box-shadow:var(--sh)}
+.dark .daily-card{background:linear-gradient(135deg,#2A1A0A,var(--white));border-color:#7C2D12}
+.daily-flame{font-size:34px;line-height:1;filter:drop-shadow(0 2px 6px rgba(249,115,22,.5))}
+.daily-flame.cold{filter:grayscale(1);opacity:.5}
+.daily-body{flex:1;min-width:0}
+.daily-title{font-family:'Sora',sans-serif;font-weight:800;font-size:16px}
+.daily-sub{font-size:12px;color:var(--t2);margin:2px 0 6px}
+.daily-week{display:flex;gap:4px}
+.dw{width:22px;height:22px;border-radius:6px;background:var(--bg);font-size:10px;font-weight:700;color:var(--t3);display:flex;align-items:center;justify-content:center}
+.dw.on{background:#F97316;color:#fff}
+.dw.gift{background:transparent;font-size:14px}
+.btn-daily{flex-shrink:0;background:#F97316;color:#fff;border:none;border-radius:10px;font-weight:800;font-size:14px;padding:11px 16px;transition:transform .15s,background .15s}
+.btn-daily:hover:not(:disabled){background:#EA580C;transform:translateY(-1px)}
+.btn-daily:disabled{background:var(--green-bg);color:var(--green)}
+.btn-daily.pulse{animation:pulse 1.8s infinite}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(249,115,22,.5)}50%{box-shadow:0 0 0 8px rgba(249,115,22,0)}}
+.onboard-card{background:var(--white);border:1px solid var(--border);border-radius:var(--r-lg);padding:14px 16px;box-shadow:var(--sh)}
+.onboard-head{display:flex;justify-content:space-between;margin-bottom:6px;font-size:14px}
+.onboard-head span{color:var(--t2);font-weight:700;font-size:12px}
+.onboard-list{list-style:none;display:flex;flex-direction:column;gap:3px;font-size:13px}
+.onboard-list li.done{color:var(--t3);text-decoration:line-through}
+.onboard-list a{color:var(--blue);font-weight:600}
+button.nav-avatar{border:none;padding:0}
+
+/* ── Profil ──────────────────────────────────────────────────────────────────── */
+.profile-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.ref-box{display:flex;gap:8px}
+.ref-box .input{flex:1;min-width:0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
+.rank-pos{display:flex;gap:24px}
+.rank-pos>div{display:flex;flex-direction:column}
+.rp-num{font-family:'Sora',sans-serif;font-size:28px;font-weight:800;color:var(--blue)}
+.rp-lbl{font-size:12px;color:var(--t2)}
+.badges-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px}
+.badge{background:var(--white);border:1px solid var(--border);border-radius:var(--r-lg);padding:12px;text-align:center;opacity:.55}
+.badge.on{opacity:1;border-color:#C4B5FD;box-shadow:var(--sh)}
+.badge-ico{font-size:28px}
+.badge-name{font-weight:700;font-size:13px;margin-top:2px}
+.badge-desc{font-size:11px;color:var(--t2);line-height:1.3}
+.pos{color:var(--green)}.neg{color:var(--red)}
+.settings{display:flex;flex-direction:column;gap:10px}
+.settings-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}
+.danger-txt{color:var(--red)!important}
+
+/* ── Jeux ────────────────────────────────────────────────────────────────────── */
+.games-info{background:var(--white);border:1px solid var(--border);border-radius:var(--r);padding:10px 14px;font-size:13px;color:var(--t2);margin-bottom:14px}
+.games-info a{color:var(--blue);font-weight:600}
+.games-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.game-card{background:var(--white);border:1px solid var(--border);border-radius:var(--r-xl);padding:18px;box-shadow:var(--sh);display:flex;flex-direction:column;gap:12px;align-items:stretch}
+.game-card.wide{grid-column:1/-1}
+.game-head{display:flex;gap:10px;align-items:center}
+.game-ico{font-size:30px}
+.game-head h2{font-family:'Sora',sans-serif;font-size:17px;font-weight:800;line-height:1.2}
+.game-head p{font-size:12px;color:var(--t2)}
+.bet-row{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.bet-lbl{font-size:12px;font-weight:700;color:var(--t2)}
+.bet-input{width:90px}
+.chip{border:1px solid var(--border2);background:var(--surface2);border-radius:20px;font-size:12px;font-weight:700;padding:4px 10px;color:var(--t2)}
+.chip:hover{border-color:var(--blue);color:var(--blue)}
+.choice-row{display:flex;gap:8px}
+.choice-row.wrap{flex-wrap:wrap}
+.choice-row.wrap .btn-choice{flex:1 1 30%}
+.btn-choice{flex:1;border:1px solid var(--border2);background:var(--surface2);border-radius:10px;font-weight:700;font-size:13px;padding:10px 8px;transition:all .15s}
+.btn-choice:hover:not(:disabled){border-color:var(--blue);color:var(--blue);transform:translateY(-1px)}
+.btn-choice:disabled{opacity:.5}
+.btn-choice.red{background:#DC2626;border-color:#DC2626;color:#fff}
+.btn-choice.black{background:#111827;border-color:#111827;color:#fff}
+.btn-choice.gold{background:#F59E0B;border-color:#F59E0B;color:#fff}
+.number-row{display:flex;gap:8px}
+.number-row .input{width:110px}
+.game-result{min-height:22px;font-weight:700;font-size:14px;text-align:center}
+.game-result.win{color:var(--green)}.game-result.lose{color:var(--red)}.game-result.err{color:var(--amber)}
+.coin{align-self:center;width:90px;height:90px;perspective:600px}
+.coin-face{width:100%;height:100%;border-radius:50%;background:radial-gradient(circle at 35% 30%,#FDE68A,#F59E0B 60%,#B45309);display:flex;align-items:center;justify-content:center;font-family:'Sora',sans-serif;font-weight:800;font-size:34px;color:#78350F;box-shadow:0 6px 16px rgba(180,83,9,.35)}
+.coin.flip .coin-face{animation:flip .9s ease-in-out}
+@keyframes flip{0%{transform:rotateY(0) translateY(0)}50%{transform:rotateY(900deg) translateY(-30px)}100%{transform:rotateY(1800deg) translateY(0)}}
+.wheel{align-self:center;width:100px;height:100px;border-radius:50%;border:8px solid #92400E;background:#065F46;display:flex;align-items:center;justify-content:center;box-shadow:inset 0 0 0 4px #FCD34D,0 6px 16px rgba(0,0,0,.25)}
+.wheel span{font-family:'Sora',sans-serif;font-size:30px;font-weight:800;color:#fff}
+.wheel[data-color=red]{background:#DC2626}.wheel[data-color=black]{background:#111827}.wheel[data-color=green]{background:#059669}
+.wheel.spin{animation:spinw .4s linear infinite}
+@keyframes spinw{to{transform:rotate(360deg)}}
+.bj-table{background:radial-gradient(circle at 50% 30%,#047857,#064E3B);border-radius:var(--r-lg);padding:16px;display:flex;flex-direction:column;gap:14px;color:#fff}
+.bj-label{font-size:12px;font-weight:700;opacity:.85;margin-bottom:6px}
+.bj-cards{display:flex;gap:8px;min-height:84px;flex-wrap:wrap}
+.pcard{width:58px;height:84px;border-radius:8px;background:#fff;color:#111;display:flex;flex-direction:column;justify-content:space-between;padding:5px 7px;font-weight:800;font-size:17px;box-shadow:0 3px 8px rgba(0,0,0,.3);animation:deal .3s ease both}
+.pcard.red{color:#DC2626}
+.pcard .suit{align-self:flex-end;font-size:22px}
+.pcard.back{background:repeating-linear-gradient(45deg,#1D4ED8,#1D4ED8 6px,#2563EB 6px,#2563EB 12px);border:3px solid #fff}
+@keyframes deal{from{transform:translateY(-20px) rotate(-8deg);opacity:0}to{transform:none;opacity:1}}
+.games-legal{font-size:11.5px;color:var(--t3);margin-top:14px;line-height:1.5}
+@media(max-width:760px){.games-grid,.profile-grid,.loyal-row:has(.onboard-card:not(.hidden)){grid-template-columns:1fr}.daily-card{flex-wrap:wrap}.btn-daily{width:100%}}
