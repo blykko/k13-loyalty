@@ -4,7 +4,7 @@
  * et jeux : /pileouface /roulette /blackjack (boutons Tirer / Rester / Doubler).
  * Enregistrées sur le serveur DISCORD_GUILD_ID au démarrage du bot.
  */
-const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
 const { dbGet } = require('../models/db');
 
 const RANK_LABEL = { bronze: '🥉 Bronze', silver: '🥈 Silver', gold: '🥇 Gold' };
@@ -20,18 +20,18 @@ const COMMANDS = [
   new SlashCommandBuilder().setName('defis').setDescription('Tes défis du jour restants'),
   new SlashCommandBuilder().setName('parrainage').setDescription('Ton lien de parrainage'),
   new SlashCommandBuilder().setName('badges').setDescription('Tes badges débloqués'),
-  new SlashCommandBuilder().setName('pileouface').setDescription('Parie tes points à pile ou face (gain ×1,9)')
-    .addIntegerOption(o => o.setName('mise').setDescription('Points misés').setRequired(true).setMinValue(10).setMaxValue(500))
+  new SlashCommandBuilder().setName('pileouface').setDescription('Pile ou face : gain ×1,9')
+    .addIntegerOption(o => o.setName('mise').setDescription('Points misés').setRequired(true).setMinValue(1))
     .addStringOption(o => o.setName('choix').setDescription('Pile ou face').setRequired(true).addChoices({ name: 'Pile', value: 'pile' }, { name: 'Face', value: 'face' })),
   new SlashCommandBuilder().setName('roulette').setDescription('Roulette européenne')
-    .addIntegerOption(o => o.setName('mise').setDescription('Points misés').setRequired(true).setMinValue(10).setMaxValue(500))
+    .addIntegerOption(o => o.setName('mise').setDescription('Points misés').setRequired(true).setMinValue(1))
     .addStringOption(o => o.setName('pari').setDescription('Sur quoi parier').setRequired(true).addChoices(
       { name: 'Rouge (×2)', value: 'rouge' }, { name: 'Noir (×2)', value: 'noir' }, { name: 'Pair (×2)', value: 'pair' },
       { name: 'Impair (×2)', value: 'impair' }, { name: '1-18 (×2)', value: 'manque' }, { name: '19-36 (×2)', value: 'passe' },
       { name: 'Douzaine (×3)', value: 'douzaine' }, { name: 'Numéro (×36)', value: 'numero' }))
     .addIntegerOption(o => o.setName('valeur').setDescription('Numéro (0-36) ou douzaine (1-3)').setMinValue(0).setMaxValue(36)),
   new SlashCommandBuilder().setName('blackjack').setDescription('Blackjack contre le croupier')
-    .addIntegerOption(o => o.setName('mise').setDescription('Points misés').setRequired(true).setMinValue(10).setMaxValue(500)),
+    .addIntegerOption(o => o.setName('mise').setDescription('Points misés').setRequired(true).setMinValue(1)),
 ].map(c => c.toJSON());
 
 async function register(client) {
@@ -49,34 +49,6 @@ async function register(client) {
 
 const userOf = discordId => dbGet('SELECT * FROM users WHERE discord_id=?', [discordId]);
 const notLinked = i => i.reply({ content: `Tu n'as pas encore de compte K13 Loyalty 👉 connecte-toi avec Discord sur ${site() || 'le site'} !`, flags: MessageFlags.Ephemeral });
-const color = (r) => r.ok === false ? 0xDC2626 : r.win === false ? 0xDC2626 : r.win ? 0x059669 : 0x2563EB;
-
-// ── Blackjack : rendu et boutons ───────────────────────────────────────────────
-function bjMessage(r, discordId) {
-  const embed = new EmbedBuilder().setColor(r.done ? (r.win ? 0x059669 : r.outcome === 'push' ? 0x6B7280 : 0xDC2626) : 0x2563EB)
-    .setTitle(`🃏 Blackjack — mise ${fmt(r.bet)} pts`)
-    .addFields(
-      { name: `Toi (${r.playerValue})`, value: r.player.join('  '), inline: true },
-      { name: `Croupier (${r.done ? r.dealerValue : '?'})`, value: r.dealer.join('  '), inline: true })
-    .setDescription(r.message + (r.balance !== undefined && r.done ? `\nSolde : **${fmt(r.balance)} pts**` : ''));
-  const components = r.done ? [] : [new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId(`bj:hit:${discordId}`).setLabel('Tirer').setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId(`bj:stand:${discordId}`).setLabel('Rester').setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId(`bj:double:${discordId}`).setLabel('Doubler').setStyle(ButtonStyle.Success).setDisabled(!r.canDouble))];
-  return { embeds: [embed], components };
-}
-
-async function handleButton(i) {
-  const m = i.customId.match(/^bj:(hit|stand|double):(\d+)$/);
-  if (!m) return false;
-  if (i.user.id !== m[2]) { await i.reply({ content: 'Ce n\'est pas ta partie 😉 Lance la tienne avec /blackjack.', flags: MessageFlags.Ephemeral }); return true; }
-  const u = userOf(i.user.id);
-  if (!u) { await notLinked(i); return true; }
-  const r = require('./games').blackjackAction(u.id, m[1]);
-  if (!r.ok) { await i.reply({ content: r.message, flags: MessageFlags.Ephemeral }); return true; }
-  await i.update(bjMessage(r, i.user.id));
-  return true;
-}
 
 // ── Commandes ──────────────────────────────────────────────────────────────────
 async function handleCommand(i) {
@@ -145,34 +117,21 @@ async function handleCommand(i) {
       .setDescription(list.map(b => `${b.unlocked ? b.icon : '🔒'} **${b.name}** — ${b.desc}`).join('\n'))] });
   }
 
-  if (name === 'pileouface') {
-    const r = games.coinflip(u.id, i.options.getInteger('mise'), i.options.getString('choix'));
-    if (!r.ok) return i.reply({ content: r.message, flags: MessageFlags.Ephemeral });
-    return i.reply({ embeds: [new EmbedBuilder().setColor(color(r)).setTitle('🪙 Pile ou face').setDescription(`${r.message}\nSolde : **${fmt(r.balance)} pts**`)] });
-  }
-
+  const dg = require('./discord-games');
+  if (name === 'pileouface') return dg.playCoin(i, u, i.options.getInteger('mise'), i.options.getString('choix'));
   if (name === 'roulette') {
     const type = i.options.getString('pari');
     const value = i.options.getInteger('valeur');
     if ((type === 'numero' || type === 'douzaine') && value === null)
       return i.reply({ content: type === 'numero' ? 'Indique le numéro (0-36) dans « valeur ».' : 'Indique la douzaine (1, 2 ou 3) dans « valeur ».', flags: MessageFlags.Ephemeral });
-    const r = games.roulette(u.id, i.options.getInteger('mise'), type, value);
-    if (!r.ok) return i.reply({ content: r.message, flags: MessageFlags.Ephemeral });
-    const dot = { rouge: '🔴', noir: '⚫', vert: '🟢' }[r.color];
-    return i.reply({ embeds: [new EmbedBuilder().setColor(color(r)).setTitle(`🎡 Roulette : ${dot} ${r.number}`)
-      .setDescription(`${r.message}\nSolde : **${fmt(r.balance)} pts**${r.badge ? '\n🏅 Badge débloqué : 🎰 Jackpot !' : ''}`)] });
+    return dg.playRoulette(i, u, i.options.getInteger('mise'), type, value ?? 0);
   }
-
-  if (name === 'blackjack') {
-    const r = games.blackjackStart(u.id, i.options.getInteger('mise'));
-    if (!r.ok) return i.reply({ content: r.message, flags: MessageFlags.Ephemeral });
-    return i.reply(bjMessage(r, i.user.id));
-  }
+  if (name === 'blackjack') return dg.playBlackjack(i, u, i.options.getInteger('mise'));
 }
 
 async function handle(i) {
   try {
-    if (i.isButton()) return await handleButton(i);
+    if (i.isButton()) return await require('./discord-games').handleButton(i, userOf, notLinked);
     if (i.isChatInputCommand()) { await handleCommand(i); return true; }
   } catch (e) {
     console.error('[Commande Discord]', i.commandName || i.customId, e);

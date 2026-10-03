@@ -222,6 +222,15 @@
         <input class="fi" id="diag-dm" placeholder="Ton ID Discord pour recevoir un MP de test (optionnel)" style="margin-bottom:10px"/>
         <div id="diag-result" class="muted" style="white-space:pre-line"></div>
       </div>
+      <form class="card" id="games-form">
+        <div class="card-title">🎲 Jeux</div>
+        <div class="grid-form">
+          <div class="fg"><label class="fl">Mise minimum</label><input class="fi" type="number" min="1" name="minBet"/></div>
+          <div class="fg"><label class="fl">Mise maximum</label><input class="fi" type="number" min="0" name="maxBet"/><div class="fh">0 = illimité</div></div>
+          <div class="fg span2"><label class="fl">Parties par jour et par membre</label><input class="fi" type="number" min="0" name="daily"/><div class="fh">0 = illimité (réglage par défaut).</div></div>
+        </div>
+        <button class="btn-primary sm" type="submit">Enregistrer</button>
+      </form>
       <form class="card" id="pwd-form">
         <div class="card-title">Mot de passe admin</div>
         <div class="fg"><input class="fi" type="password" id="new-pwd" placeholder="Nouveau mot de passe (10 caractères min.)" minlength="10" autocomplete="new-password" required/></div>

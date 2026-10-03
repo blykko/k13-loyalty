@@ -14,14 +14,35 @@ const { dbGet, dbRun } = require('../models/db');
 const T = require('./time');
 const { logPoints } = require('./challenges');
 
-const MIN_BET = 10, MAX_BET = 500, DAILY_GAMES = 40;
+// Réglables dans l'admin (Paramètres → Jeux) ; 0 = illimité (par défaut : aucune limite)
+const DEFAULTS = { minBet: 1, maxBet: 0, daily: 0 };
+function config() {
+  const c = { ...DEFAULTS };
+  try {
+    const row = dbGet("SELECT value FROM app_settings WHERE key='games'");
+    if (row) Object.assign(c, JSON.parse(row.value));
+  } catch {}
+  return c;
+}
+function setConfig(v) {
+  const c = {
+    minBet: Math.max(1, parseInt(v.minBet, 10) || DEFAULTS.minBet),
+    maxBet: Math.max(0, parseInt(v.maxBet, 10) || 0),
+    daily: Math.max(0, parseInt(v.daily, 10) || 0),
+  };
+  if (c.maxBet && c.maxBet < c.minBet) c.maxBet = c.minBet;
+  dbRun("INSERT OR REPLACE INTO app_settings (key,value) VALUES ('games',?)", [JSON.stringify(c)]);
+  return c;
+}
 const COIN_PAYOUT = 1.9;
 const rnd = n => crypto.randomInt(n);
 
 function limits(userId) {
+  const c = config();
   const from = T.toSql(T.periodStart(T.DAY));
-  const played = dbGet("SELECT COUNT(*) AS c FROM points_log WHERE user_id=? AND reason='game' AND delta<0 AND created_at>=?", [userId, from]).c;
-  return { minBet: MIN_BET, maxBet: MAX_BET, daily: DAILY_GAMES, played, left: Math.max(0, DAILY_GAMES - played) };
+  // Une partie = une mise initiale (le "doubler" du blackjack ne compte pas)
+  const played = dbGet("SELECT COUNT(*) AS c FROM points_log WHERE user_id=? AND reason='game' AND delta<0 AND label NOT LIKE '%(double)' AND created_at>=?", [userId, from]).c;
+  return { minBet: c.minBet, maxBet: c.maxBet, daily: c.daily, played, left: c.daily ? Math.max(0, c.daily - played) : null };
 }
 
 // Vérifie la mise et débite les points ; retourne une erreur ou null
@@ -30,8 +51,10 @@ function takeBet(userId, bet, label) {
   const u = dbGet('SELECT points, games_disabled FROM users WHERE id=?', [userId]);
   if (!u) return { error: 'Compte introuvable.' };
   if (u.games_disabled) return { error: 'Tu as désactivé les jeux sur ton compte (réactivable depuis ton profil).' };
-  if (!Number.isInteger(bet) || bet < MIN_BET || bet > MAX_BET) return { error: `Mise entre ${MIN_BET} et ${MAX_BET} pts.` };
-  if (limits(userId).left <= 0) return { error: `Limite de ${DAILY_GAMES} parties par jour atteinte, reviens demain !` };
+  const l = limits(userId);
+  if (!Number.isInteger(bet) || bet < l.minBet || (l.maxBet && bet > l.maxBet))
+    return { error: l.maxBet ? `Mise entre ${l.minBet} et ${l.maxBet} pts.` : `Mise minimum : ${l.minBet} pt(s).` };
+  if (l.left !== null && l.left <= 0) return { error: `Limite de ${l.daily} parties par jour atteinte, reviens demain !` };
   const r = dbRun('UPDATE users SET points=points-? WHERE id=? AND points>=?', [bet, userId, bet]);
   if (!r.changes) return { error: `Pas assez de points (tu en as ${u.points}).` };
   logPoints(userId, -bet, 'game', label);
@@ -194,4 +217,4 @@ function houseStats() {
   return { ...r, house: r.bets - r.paid };
 }
 
-module.exports = { limits, coinflip, roulette, ROULETTE_BETS, colorOf, blackjackStart, blackjackAction, blackjackState, handValue, houseStats, MIN_BET, MAX_BET };
+module.exports = { config, setConfig, limits, coinflip, roulette, ROULETTE_BETS, colorOf, blackjackStart, blackjackAction, blackjackState, handValue, houseStats };

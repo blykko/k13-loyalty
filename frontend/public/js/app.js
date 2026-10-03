@@ -623,13 +623,19 @@ function renderBetRows() {
     const g = row.dataset.game;
     if (row.dataset.ready) return;
     row.dataset.ready = '1';
-    row.innerHTML = `<label class="bet-lbl">Mise</label><input class="input bet-input" type="number" id="bet-${g}" min="10" max="500" step="10" value="${getBetPref(g)}"/>
-      ${CHIPS.map(v => `<button class="chip" data-action="bet-chip" data-game="${g}" data-value="${v}">${v}</button>`).join('')}`;
+    row.innerHTML = `<label class="bet-lbl">Mise</label><input class="input bet-input" type="number" id="bet-${g}" min="1" step="10" value="${getBetPref(g)}"/>
+      ${CHIPS.map(v => `<button class="chip" data-action="bet-chip" data-game="${g}" data-value="${v}">${v}</button>`).join('')}
+      <button class="chip" data-action="bet-chip" data-game="${g}" data-value="half">½</button>
+      <button class="chip" data-action="bet-chip" data-game="${g}" data-value="double">×2</button>
+      <button class="chip allin" data-action="bet-chip" data-game="${g}" data-value="all">🔥 Tapis</button>`;
     el(`bet-${g}`).addEventListener('change', e => { try { localStorage.setItem('k13-bet-' + g, e.target.value); } catch {} });
   });
 }
 function getBetPref(g) { try { return +localStorage.getItem('k13-bet-' + g) || 50; } catch { return 50; } }
-function setBet(g, v) { el(`bet-${g}`).value = v; try { localStorage.setItem('k13-bet-' + g, v); } catch {} }
+function setBet(g, v) {
+  const cur = betOf(g);
+  v = v === 'all' ? (STATE.user?.points || 0) : v === 'half' ? Math.max(1, Math.floor(cur / 2)) : v === 'double' ? cur * 2 : v;
+  el(`bet-${g}`).value = v; try { localStorage.setItem('k13-bet-' + g, v); } catch {} }
 const betOf = g => parseInt(el(`bet-${g}`).value, 10) || 0;
 
 async function loadGames() {
@@ -645,7 +651,7 @@ function renderGamesInfo() {
   const l = GAMES.limits; if (!l) return;
   el('games-info').innerHTML = STATE.gamesDisabled
     ? '🚫 Les jeux sont désactivés sur ton compte. <a href="#" data-page="profile">Les réactiver</a>'
-    : `Mise de ${l.minBet} à ${l.maxBet} pts · <strong>${l.left}</strong> partie${l.left > 1 ? 's' : ''} restante${l.left > 1 ? 's' : ''} aujourd'hui`;
+    : (l.maxBet ? `Mise de ${l.minBet} à ${fmtNum(l.maxBet)} pts` : 'Mise libre : joue autant que tu veux, avec ce que tu veux 🎲') + (l.left === null ? '' : ` · <strong>${l.left}</strong> partie${l.left > 1 ? 's' : ''} restante${l.left > 1 ? 's' : ''} aujourd'hui`);
 }
 function updateBalance(points) {
   if (!STATE.user || points === undefined) return;

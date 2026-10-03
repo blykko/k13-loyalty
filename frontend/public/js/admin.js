@@ -47,7 +47,7 @@ el('btn-dark').addEventListener('click', () => {
 function syncDarkBtn() { el('btn-dark').textContent = document.documentElement.classList.contains('dark') ? '☀️' : '🌙'; }
 
 // ── Navigation ─────────────────────────────────────────────────────────────────
-const LOADERS = { overview: loadOverview, pending: loadPending, users: loadUsers, challenges: loadChallenges, shop: loadShop, codes: loadCodes, ranking: loadRanking, settings: () => {} };
+const LOADERS = { overview: loadOverview, pending: loadPending, users: loadUsers, challenges: loadChallenges, shop: loadShop, codes: loadCodes, ranking: loadRanking, settings: loadSettings };
 function adminPage(id, push = true) {
   if (!LOADERS[id]) id = 'overview';
   currentPage = id;
@@ -482,6 +482,18 @@ document.querySelectorAll('[data-diag]').forEach(b => b.addEventListener('click'
   const r = await api('GET', `/api/admin/diag/${b.dataset.diag}${dm ? '?dm=' + encodeURIComponent(dm) : ''}`);
   el('diag-result').textContent = r.message || JSON.stringify(r);
 }));
+el('games-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const f = e.target;
+  const r = await api('POST', '/api/admin/settings/games', { minBet: +f.minBet.value, maxBet: +f.maxBet.value, daily: +f.daily.value });
+  toast(r.message, r.ok ? 'success' : 'error');
+});
+async function loadSettings() {
+  const r = await api('GET', '/api/admin/settings/games');
+  if (!r.ok) return;
+  const f = el('games-form');
+  f.minBet.value = r.minBet; f.maxBet.value = r.maxBet; f.daily.value = r.daily;
+}
 el('pwd-form').addEventListener('submit', async e => {
   e.preventDefault();
   if (el('new-pwd').value !== el('new-pwd2').value) return toast('Les mots de passe ne correspondent pas.', 'error');
