@@ -14,7 +14,7 @@
  *   ✅ PRESENCE INTENT (optionnel, pour le vocal)
  */
 
-const { Client, GatewayIntentBits, Events } = require('discord.js');
+const { Client, GatewayIntentBits, Events, PermissionFlagsBits, MessageFlags } = require('discord.js');
 const discord = require('./discord');
 
 let client = null;
@@ -151,6 +151,31 @@ function startBot() {
     } catch(e) { console.warn('[Bot Discord] Invite tracking error:', e.message); }
   });
 
+  // ── Boutons Accepter / Refuser du salon admin ─────────────────────────────
+  client.on(Events.InteractionCreate, async interaction => {
+    if (!interaction.isButton()) return;
+    const m = interaction.customId.match(/^k13:(approve|reject):(\d+)$/);
+    if (!m) return;
+    const roleId = process.env.DISCORD_ADMIN_ROLE_ID;
+    const member = interaction.member;
+    const allowed = roleId
+      ? member?.roles?.cache?.has(roleId)
+      : interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild);
+    if (!allowed) {
+      return interaction.reply({ content: '⛔ Tu n\'as pas la permission de valider les défis.', flags: MessageFlags.Ephemeral }).catch(() => {});
+    }
+    // Évite le message "l'interaction a échoué" pendant le traitement
+    await interaction.deferUpdate().catch(() => {});
+    const ch = require('./challenges');
+    const by = interaction.user.globalName || interaction.user.username;
+    const res = m[1] === 'approve' ? ch.approvePending(+m[2], { by }) : ch.rejectPending(+m[2], { by });
+    if (!res.ok) {
+      // Déjà traitée (ex. depuis le site) : on retire les boutons
+      await interaction.message.edit({ components: [] }).catch(() => {});
+      await interaction.followUp({ content: `ℹ️ ${res.message}`, flags: MessageFlags.Ephemeral }).catch(() => {});
+    }
+  });
+
   client.login(token).catch(err => {
     console.error('[Bot Discord] Erreur de connexion :', err.message);
     console.error('→ Vérifie que DISCORD_BOT_TOKEN est correct dans .env');
@@ -176,4 +201,6 @@ function stopBot() {
   client?.destroy();
 }
 
-module.exports = { startBot, stopBot };
+const getClient = () => client;
+
+module.exports = { startBot, stopBot, getClient };

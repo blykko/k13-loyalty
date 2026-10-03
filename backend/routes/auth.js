@@ -5,11 +5,16 @@ const crypto  = require('crypto');
 const { dbGet, dbRun } = require('../models/db');
 const discord = require('../services/discord');
 const twitch  = require('../services/twitch');
+const twitter = require('../services/twitter');
 const { requireUser } = require('../middleware/auth');
 const router = express.Router();
 
 // ── Discord OAuth (auth principale) ───────────────────────────────────────────
 router.get('/discord', (req, res) => {
+  if (!process.env.DISCORD_CLIENT_ID || !process.env.DISCORD_REDIRECT_URI) {
+    console.error('[Discord] DISCORD_CLIENT_ID / DISCORD_REDIRECT_URI manquants : variables d\'environnement non chargées');
+    return res.redirect('/?error=discord_not_configured');
+  }
   const state = crypto.randomBytes(16).toString('hex');
   req.session.oauthState = state;
   req.session.save(err => {
@@ -105,6 +110,41 @@ router.get('/twitch/callback', requireUser, async (req, res) => {
       : 'twitch_link_failed';
     res.redirect('/?error=' + hint);
   }
+});
+
+// ── X / Twitter OAuth (liaison) ────────────────────────────────────────────────
+router.get('/twitter', requireUser, (req, res) => {
+  if (!twitter.isConfigured()) return res.redirect('/?error=twitter_not_configured');
+  const state = crypto.randomBytes(16).toString('hex');
+  const verifier = twitter.generateCodeVerifier();
+  req.session.oauthState = state;
+  req.session.twitterVerifier = verifier;
+  req.session.save(() => res.redirect(twitter.getAuthUrl(state, verifier)));
+});
+
+router.get('/twitter/callback', requireUser, async (req, res) => {
+  const { code, state, error } = req.query;
+  if (error || !code) return res.redirect('/?error=twitter_denied');
+  if (!state || state !== req.session.oauthState || !req.session.twitterVerifier) return res.redirect('/?error=twitter_state_mismatch');
+  const verifier = req.session.twitterVerifier;
+  delete req.session.oauthState; delete req.session.twitterVerifier;
+  try {
+    const tokens = await twitter.exchangeCode(code, verifier);
+    const tUser  = await twitter.getTwitterUser(tokens.access_token);
+    if (dbGet('SELECT id FROM users WHERE twitter_id=? AND id!=?', [tUser.id, req.session.userId]))
+      return res.redirect('/?error=twitter_already_linked');
+    dbRun('UPDATE users SET twitter_id=?, twitter_username=? WHERE id=?', [tUser.id, tUser.username, req.session.userId]);
+    twitter.saveTokens(req.session.userId, tokens);
+    req.session.save(() => res.redirect('/?linked=twitter'));
+  } catch (e) {
+    console.error('[Twitter OAuth]', e.message);
+    res.redirect('/?error=twitter_link_failed');
+  }
+});
+
+router.post('/twitter/unlink', requireUser, (req, res) => {
+  dbRun('UPDATE users SET twitter_id=NULL, twitter_username=NULL, twitter_token=NULL, twitter_refresh=NULL, twitter_token_exp=NULL WHERE id=?', [req.session.userId]);
+  res.json({ ok: true, message: 'Compte X délié.' });
 });
 
 // ── Admin ──────────────────────────────────────────────────────────────────────

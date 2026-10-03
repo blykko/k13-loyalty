@@ -11,7 +11,9 @@ const se      = require('../services/streamelements');
 const stripe  = require('../services/stripe');
 const T       = require('../services/time');
 const { requireAdmin } = require('../middleware/auth');
-const { removePoints, updateRank, completeChallenge, getPeriodKey, getEntry } = require('../services/challenges');
+const { removePoints, updateRank, completeChallenge, getPeriodKey, getEntry, approvePending, rejectPending } = require('../services/challenges');
+const notify  = require('../services/notify');
+const twitterSvc = require('../services/twitter');
 const router = express.Router();
 router.use(requireAdmin);
 
@@ -20,7 +22,7 @@ const removeFile = p => { if (p) fs.unlink(path.join(PUBLIC, 'uploads', path.bas
 const int = v => { const n = parseInt(v, 10); return Number.isFinite(n) ? n : null; };
 
 // Colonnes utilisateur exposées à l'admin (jamais les tokens OAuth)
-const USER_COLS = 'u.id,u.username,u.points,u.lifetime_points,u.rank,u.discord_id,u.discord_username,u.discord_avatar,u.twitch_id,u.twitch_login,u.epic_username,u.epic_creator_code,u.created_at,u.last_seen';
+const USER_COLS = 'u.id,u.username,u.points,u.lifetime_points,u.rank,u.discord_id,u.discord_username,u.discord_avatar,u.twitch_id,u.twitch_login,u.twitter_id,u.twitter_username,u.epic_username,u.epic_creator_code,u.notify_dm,u.created_at,u.last_seen';
 
 // ── Stats ──────────────────────────────────────────────────────────────────────
 router.get('/stats', (req, res) => res.json({ ok: true,
@@ -55,7 +57,9 @@ router.get('/stats/detailed', (req, res) => {
     newUsers: dbAll("SELECT username,discord_username,twitch_login,lifetime_points AS points,created_at FROM users WHERE created_at>datetime('now','-30 days') ORDER BY created_at DESC LIMIT 30"),
     seConfigured: se.isConfigured(),
     stripeConfigured: stripe.isStripeConfigured(),
-    botConfigured: !!process.env.DISCORD_BOT_TOKEN,
+    botConfigured: notify.ready(),
+    adminChannelConfigured: !!process.env.DISCORD_ADMIN_CHANNEL_ID,
+    twitterConfigured: twitterSvc.isConfigured(),
   });
 });
 
@@ -117,6 +121,8 @@ router.post('/users/:userId/challenge/:challengeId/validate', (req, res) => {
     return res.json({ ok: false, message: 'Déjà validé pour cette période.' });
   removeFile(entry?.screenshot_path);
   dbRun('UPDATE user_challenges SET screenshot_path=NULL WHERE user_id=? AND challenge_id=? AND screenshot_path IS NOT NULL', [userId, ch.id]);
+  if (entry?.discord_msg_id) notify.resolvePendingMessage(entry.discord_msg_id, true, 'admin (site)').catch(() => {});
+  notify.notifyResult(userId, ch, true, req.body?.note || null);
   res.json({ ok: true, message: `"${ch.name}" validé (+${ch.points} pts).` });
 });
 
@@ -145,24 +151,13 @@ router.get('/pending', (req, res) => res.json({ ok: true, pending: dbAll(`
   ORDER BY (uc.screenshot_path IS NULL), uc.completed_at ASC`) }));
 
 router.post('/pending/:id/approve', (req, res) => {
-  const entry = dbGet('SELECT * FROM user_challenges WHERE id=?', [int(req.params.id)]);
-  if (!entry) return res.status(404).json({ ok: false, message: 'Demande introuvable.' });
-  if (entry.verified === 1) return res.json({ ok: false, message: 'Déjà validé.' });
-  const ch = dbGet('SELECT * FROM challenges WHERE id=?', [entry.challenge_id]);
-  if (!ch) return res.status(404).json({ ok: false, message: 'Challenge supprimé.' });
-  completeChallenge(entry.user_id, ch, entry.period_key, req.body?.note || null);
-  // Supprime le screenshot après validation pour éviter le surstockage
-  removeFile(entry.screenshot_path);
-  dbRun('UPDATE user_challenges SET screenshot_path=NULL WHERE id=?', [entry.id]);
-  res.json({ ok: true, message: `+${ch.points} pts attribués.` });
+  const r = approvePending(int(req.params.id), { note: req.body?.note || null, by: 'admin (site)' });
+  res.status(r.ok ? 200 : 400).json({ ok: r.ok, message: r.message });
 });
 
 router.post('/pending/:id/reject', (req, res) => {
-  const entry = dbGet('SELECT * FROM user_challenges WHERE id=? AND verified=0', [int(req.params.id)]);
-  if (!entry) return res.status(404).json({ ok: false, message: 'Demande introuvable.' });
-  removeFile(entry.screenshot_path);
-  dbRun('DELETE FROM user_challenges WHERE id=?', [entry.id]);
-  res.json({ ok: true, message: 'Rejeté.' });
+  const r = rejectPending(int(req.params.id), { note: req.body?.note || null, by: 'admin (site)' });
+  res.status(r.ok ? 200 : 404).json(r);
 });
 
 // ── Codes promo ────────────────────────────────────────────────────────────────
@@ -181,7 +176,7 @@ router.post('/codes/:code/use', (req, res) => {
 });
 
 // ── Challenges ─────────────────────────────────────────────────────────────────
-const CH_TYPES = ['redirect', 'screen', 'watchtime', 'messages', 'vocal', 'join', 'invite', 'follow'];
+const CH_TYPES = ['redirect', 'screen', 'watchtime', 'messages', 'vocal', 'join', 'invite', 'follow', 'tw_like', 'tw_retweet', 'tw_reply', 'tw_follow'];
 const CATEGORY_REPEAT = { daily: T.DAY, weekly: T.WEEK, monthly: T.MONTH };
 
 // Nettoie/valide les champs d'un challenge. La catégorie quotidien/hebdo/mensuel
@@ -195,6 +190,11 @@ function challengeFields(f, base = {}) {
   if (v.type && !CH_TYPES.includes(v.type)) return { error: 'Type inconnu.' };
   if (v.type === 'redirect' && !v.redirect_url) return { error: 'URL requise pour un challenge à timer.' };
   if (v.redirect_url && !/^https?:\/\//i.test(v.redirect_url)) return { error: 'URL invalide (http/https).' };
+  if (['tw_like', 'tw_retweet', 'tw_reply'].includes(v.type) && !twitterSvc.parseTweetId(v.redirect_url))
+    return { error: 'Lien de tweet requis (https://x.com/compte/status/123…).' };
+  if (v.type === 'tw_follow' && !twitterSvc.parseUsername(v.redirect_url) && !process.env.TWITTER_ACCOUNT_TO_FOLLOW)
+    return { error: 'Lien du profil X à suivre requis (https://x.com/compte).' };
+  if (v.type?.startsWith('tw_')) v.platform = 'twitter';
   return { v };
 }
 
@@ -211,7 +211,12 @@ router.post('/challenges', (req, res) => {
   if (dbGet('SELECT id FROM challenges WHERE slug=?', [slug])) return res.status(409).json({ ok: false, message: 'Slug déjà existant.' });
   dbRun('INSERT INTO challenges (platform,slug,name,description,points,type,required_value,repeat_seconds,redirect_url,redirect_delay,category,extra) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
     [v.platform, slug, v.name, v.description, v.points, v.type, v.required_value, v.repeat_seconds, v.redirect_url, v.redirect_delay || 20, v.category, JSON.stringify(f.extra || {})]);
-  res.json({ ok: true, message: 'Challenge créé.' });
+  let message = 'Challenge créé.';
+  if (f.notify) {
+    const n = notify.announceChallenge(v);
+    message += notify.ready() ? ` MP envoyé à ${n} membre(s).` : ' (bot Discord hors ligne : aucun MP envoyé)';
+  }
+  res.json({ ok: true, message });
 });
 
 router.patch('/challenges/:id', (req, res) => {

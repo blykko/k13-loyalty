@@ -279,3 +279,8 @@ button:disabled{cursor:not-allowed}
   .ch-action .btn-ch{width:100%;text-align:center}
 }
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+/* ── Défis X + préférences ───────────────────────────────────────────────────── */
+.ch-btns{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.notify-switch{margin:4px 0 14px;font-size:12.5px}
+@media(max-width:600px){.ch-btns{justify-content:stretch}.ch-btns .btn-ch{flex:1;text-align:center}}
