@@ -1,9 +1,13 @@
 'use strict';
 const crypto = require('crypto');
+const fs     = require('fs');
+const path   = require('path');
 const { dbGet, dbRun, dbAll } = require('../models/db');
 const discord = require('./discord');
 const twitch  = require('./twitch');
 const se      = require('./streamelements');
+const twitter = require('./twitter');
+const notify  = require('./notify');
 const T       = require('./time');
 
 // ── Rangs ──────────────────────────────────────────────────────────────────────
@@ -142,6 +146,50 @@ function needsAdminReview(ch) {
   return ch.slug === 'twitch-sub' || ch.platform === 'epic';
 }
 
+const TWITTER_TYPES = ['tw_like', 'tw_retweet', 'tw_reply', 'tw_follow'];
+const UPLOADS = path.join(__dirname, '../../frontend/public/uploads');
+const removeUpload = p => { if (p) fs.unlink(path.join(UPLOADS, path.basename(p)), () => {}); };
+
+// Crée (ou réutilise) une demande en attente et la signale aux admins sur Discord
+function createPending(userId, ch, pk, screenshotPath = null) {
+  let entry = getEntry(userId, ch.id, pk);
+  if (entry) {
+    if (screenshotPath) dbRun("UPDATE user_challenges SET screenshot_path=?, completed_at=datetime('now') WHERE id=?", [screenshotPath, entry.id]);
+  } else {
+    markDone(userId, ch.id, 0, pk, screenshotPath);
+    entry = getEntry(userId, ch.id, pk);
+  }
+  // Nouveau screen → l'ancien message Discord est remplacé par un nouveau
+  if (entry.discord_msg_id && screenshotPath) notify.deletePendingMessage(entry.discord_msg_id).catch(() => {});
+  if (!entry.discord_msg_id || screenshotPath) notify.sendPendingToAdmins(entry.id).catch(() => {});
+  return entry;
+}
+
+// Validation / refus d'une demande en attente (depuis le site ou les boutons Discord)
+function approvePending(entryId, { note = null, by = 'admin' } = {}) {
+  const entry = dbGet('SELECT * FROM user_challenges WHERE id=?', [entryId]);
+  if (!entry) return { ok: false, message: 'Demande introuvable.' };
+  if (entry.verified === 1) return { ok: false, message: 'Déjà validé.' };
+  const ch = dbGet('SELECT * FROM challenges WHERE id=?', [entry.challenge_id]);
+  if (!ch) return { ok: false, message: 'Challenge supprimé.' };
+  completeChallenge(entry.user_id, ch, entry.period_key, note);
+  removeUpload(entry.screenshot_path);
+  dbRun('UPDATE user_challenges SET screenshot_path=NULL WHERE id=?', [entry.id]);
+  notify.resolvePendingMessage(entry.discord_msg_id, true, by).catch(() => {});
+  notify.notifyResult(entry.user_id, ch, true, note);
+  return { ok: true, message: `+${ch.points} pts attribués.`, userId: entry.user_id, challenge: ch };
+}
+function rejectPending(entryId, { note = null, by = 'admin' } = {}) {
+  const entry = dbGet('SELECT * FROM user_challenges WHERE id=? AND verified=0', [entryId]);
+  if (!entry) return { ok: false, message: 'Demande introuvable ou déjà traitée.' };
+  const ch = dbGet('SELECT * FROM challenges WHERE id=?', [entry.challenge_id]);
+  removeUpload(entry.screenshot_path);
+  dbRun('DELETE FROM user_challenges WHERE id=?', [entry.id]);
+  notify.resolvePendingMessage(entry.discord_msg_id, false, by).catch(() => {});
+  if (ch) notify.notifyResult(entry.user_id, ch, false, note);
+  return { ok: true, message: 'Rejeté.' };
+}
+
 // ── Redirection + timer ────────────────────────────────────────────────────────
 function initiateRedirect(userId, challengeId) {
   const token = crypto.randomBytes(16).toString('hex');
@@ -184,11 +232,7 @@ function submitScreenshot(userId, challengeId, filePath) {
 
   // Validation admin : remplace un éventuel ancien screen en attente
   const old = entry?.screenshot_path;
-  if (entry) {
-    dbRun("UPDATE user_challenges SET screenshot_path=?, completed_at=datetime('now') WHERE id=?", [filePath, entry.id]);
-  } else {
-    markDone(userId, ch.id, 0, pk, filePath);
-  }
+  createPending(userId, ch, pk, filePath);
   return { ok: true, pending: true, keepFile: true, replaced: old,
     message: '📸 Screenshot envoyé ! L\'admin K13 validera sous 24h.' };
 }
@@ -231,6 +275,29 @@ async function verifyChallenge(userId, slug) {
     }
     completeChallenge(userId, ch, pk);
     return { ok: true, message: `+${ch.points} pts ! Follow Twitch vérifié ✅`, points: ch.points };
+  }
+
+  // ── X (Twitter) : like, retweet, commentaire, abonnement ────────────────
+  if (TWITTER_TYPES.includes(ch.type)) {
+    if (entry?.verified === 0) return { ok: false, pending: true, message: '⏳ Déjà en attente de validation par l\'équipe K13.' };
+    if (!user.twitter_id) return { ok: false, message: 'Lie ton compte X pour ce défi.', needsLink: 'twitter' };
+    try {
+      const done = await twitter.verifyAction(userId, ch.type, ch.redirect_url);
+      if (!done) {
+        const what = { tw_like: 'liké le tweet', tw_retweet: 'retweeté le tweet', tw_reply: 'commenté le tweet', tw_follow: 'suivi le compte' }[ch.type];
+        return { ok: false, message: `On ne voit pas encore que tu as ${what}. Ça peut prendre une minute, réessaie.`, openUrl: ch.redirect_url };
+      }
+    } catch (e) {
+      if (e instanceof twitter.TwitterRelink) return { ok: false, message: e.message, needsLink: 'twitter' };
+      if (e instanceof twitter.TwitterUnavailable) {
+        // L'API X ne permet pas de vérifier : on transmet à l'équipe (validation sur Discord)
+        createPending(userId, ch, pk);
+        return { ok: false, pending: true, message: '⏳ Vérification transmise à l\'équipe K13, tu seras prévenu en MP.' };
+      }
+      return { ok: false, message: 'Erreur X : ' + e.message };
+    }
+    completeChallenge(userId, ch, pk);
+    return { ok: true, message: `+${ch.points} pts ! "${ch.name}" validé ✅`, points: ch.points };
   }
 
   // ── Discord : rejoindre le serveur ──────────────────────────────────────
@@ -294,7 +361,8 @@ function getUserStats(userId) {
     user: { id: user.id, username: user.username, points: user.points, lifetime_points: user.lifetime_points,
       rank: user.rank, nextRank: nextRank(user.lifetime_points),
       discord_id: user.discord_id, discord_username: user.discord_username, discord_avatar: user.discord_avatar,
-      twitch_login: user.twitch_login, twitch_id: user.twitch_id, epic_username: user.epic_username },
+      twitch_login: user.twitch_login, twitch_id: user.twitch_id, epic_username: user.epic_username,
+      twitter_username: user.twitter_username, notify_dm: !!user.notify_dm },
     challenges: list,
     progression: { done, total: list.length, pct: list.length ? Math.round(done / list.length * 100) : 0 },
     activity: {
@@ -305,6 +373,7 @@ function getUserStats(userId) {
     codes:  dbAll("SELECT code,discount,used,expires_at, (expires_at < datetime('now')) AS expired FROM promo_codes WHERE user_id=? ORDER BY created_at DESC", [userId]),
     orders: dbAll('SELECT o.id,o.result,o.created_at,i.name AS item_name,i.type AS item_type FROM shop_orders o JOIN shop_items i ON o.item_id=i.id WHERE o.user_id=? ORDER BY o.created_at DESC', [userId]),
     seConfigured: se.isConfigured(),
+    twitterConfigured: twitter.isConfigured(),
   };
 }
 
@@ -323,4 +392,5 @@ module.exports = {
   RANKS, rankFor, nextRank, updateRank, addPoints, removePoints,
   getPeriodKey, getEntry, markDone, completeChallenge, getProgress, autoCheck,
   verifyChallenge, validateRedirectTimer, submitScreenshot, getUserStats, needsAdminReview,
+  approvePending, rejectPending, TWITTER_TYPES,
 };

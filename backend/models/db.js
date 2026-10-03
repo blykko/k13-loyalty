@@ -152,6 +152,15 @@ function initDb() {
               WHERE EXISTS (SELECT 1 FROM twitch_watch_sessions t WHERE t.user_id=users.id AND t.source='se')`);
     }
 
+    // Compte X (Twitter) lié + préférence de notifications privées Discord
+    for (const [col, def] of [['twitter_id', 'TEXT'], ['twitter_username', 'TEXT'], ['twitter_token', 'TEXT'],
+      ['twitter_refresh', 'TEXT'], ['twitter_token_exp', 'INTEGER'], ['notify_dm', 'INTEGER NOT NULL DEFAULT 1']]) {
+      if (!hasCol('users', col)) db.run(`ALTER TABLE users ADD COLUMN ${col} ${def}`);
+    }
+    db.run('CREATE UNIQUE INDEX IF NOT EXISTS ux_users_twitter ON users(twitter_id) WHERE twitter_id IS NOT NULL');
+    // Message Discord (salon admin) associé à une demande de validation, pour le mettre à jour
+    if (!hasCol('user_challenges', 'discord_msg_id')) db.run('ALTER TABLE user_challenges ADD COLUMN discord_msg_id TEXT');
+
     // Doublons user_challenges (même user / challenge / période) → on garde la ligne validée la plus ancienne
     db.run(`DELETE FROM user_challenges WHERE id IN (
       SELECT a.id FROM user_challenges a JOIN user_challenges b

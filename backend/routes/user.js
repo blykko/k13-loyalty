@@ -109,6 +109,12 @@ router.post('/epic', (req, res) => {
   res.json({ ok: true, message: 'Infos Epic Games enregistrées.' });
 });
 
+// ── Préférences ────────────────────────────────────────────────────────────────
+router.post('/settings', (req, res) => {
+  if (req.body?.notify_dm !== undefined) dbRun('UPDATE users SET notify_dm=? WHERE id=?', [req.body.notify_dm ? 1 : 0, req.session.userId]);
+  res.json({ ok: true, message: 'Préférences enregistrées.' });
+});
+
 // ── Watch time Twitch (tracker manuel, seulement sans StreamElements) ──────────
 router.post('/watchtime/start', async (req, res) => {
   if (se.isConfigured()) return res.status(400).json({ ok: false, message: 'Le visionnage est suivi automatiquement.' });
