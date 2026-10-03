@@ -86,7 +86,9 @@ function notifyResult(userId, ch, approved, note) {
 // ── Demande de validation → salon admin avec boutons ───────────────────────────
 async function sendPendingToAdmins(entryId) {
   const channelId = process.env.DISCORD_ADMIN_CHANNEL_ID;
-  if (!ready() || !channelId) return;
+  if (!channelId) return console.warn('[Notify] DISCORD_ADMIN_CHANNEL_ID non défini : demande', entryId, 'non envoyée sur Discord');
+  // Bot pas (encore) connecté : la demande sera envoyée à sa connexion (postMissingPending)
+  if (!ready()) return console.warn('[Notify] Bot Discord non connecté : demande', entryId, 'envoyée plus tard');
   const e = dbGet(`SELECT uc.*, u.discord_id, u.discord_username, u.username, u.twitter_username,
       c.name AS ch_name, c.points, c.platform, c.type, c.redirect_url
     FROM user_challenges uc JOIN users u ON u.id=uc.user_id JOIN challenges c ON c.id=uc.challenge_id WHERE uc.id=?`, [entryId]);
@@ -148,4 +150,49 @@ async function deletePendingMessage(msgId) {
   try { await (await (await client().channels.fetch(channelId)).messages.fetch(msgId)).delete(); } catch {}
 }
 
-module.exports = { ready, deletePendingMessage, siteUrl, dmUser, announceChallenge, notifyResult, sendPendingToAdmins, resolvePendingMessage };
+// Envoie les demandes en attente qui n'ont jamais été postées (bot hors ligne au moment de la demande)
+async function postMissingPending() {
+  if (!ready() || !process.env.DISCORD_ADMIN_CHANNEL_ID) return 0;
+  const rows = dbAll('SELECT id FROM user_challenges WHERE verified=0 AND discord_msg_id IS NULL ORDER BY id LIMIT 50');
+  for (const r of rows) await sendPendingToAdmins(r.id);
+  if (rows.length) console.log(`[Notify] ${rows.length} demande(s) en attente postée(s) dans le salon admin`);
+  return rows.length;
+}
+
+// Diagnostic complet (bouton "Tester Discord" de l'admin)
+async function diagnose(testDiscordId) {
+  const { PermissionFlagsBits } = require('discord.js');
+  const out = { botReady: ready(), checks: [] };
+  const add = (ok, label) => out.checks.push({ ok, label });
+  if (!process.env.DISCORD_BOT_TOKEN) { add(false, 'DISCORD_BOT_TOKEN absent du .env'); return out; }
+  if (!ready()) { add(false, 'Bot Discord non connecté : token invalide ou intents désactivés (voir les logs au démarrage)'); return out; }
+  add(true, `Bot connecté : ${client().user.tag}`);
+  const channelId = process.env.DISCORD_ADMIN_CHANNEL_ID;
+  if (!channelId) add(false, 'DISCORD_ADMIN_CHANNEL_ID absent du .env');
+  else {
+    try {
+      const channel = await client().channels.fetch(channelId);
+      add(true, `Salon admin trouvé : #${channel.name}`);
+      const perms = channel.permissionsFor(client().user);
+      for (const [flag, label] of [['ViewChannel', 'Voir le salon'], ['SendMessages', 'Envoyer des messages'], ['EmbedLinks', 'Intégrer des liens'], ['AttachFiles', 'Joindre des fichiers'], ['ReadMessageHistory', "Voir l'historique"]])
+        add(!!perms?.has(PermissionFlagsBits[flag]), `Permission « ${label} »`);
+      await channel.send({ content: '🧪 Test K13 Loyalty : le bot peut poster les demandes de validation ici.' });
+      add(true, 'Message de test envoyé dans le salon admin');
+    } catch (e) {
+      add(false, `Salon admin inaccessible (${e.message}) : vérifie l'ID et que le bot voit ce salon`);
+    }
+  }
+  if (testDiscordId) {
+    try {
+      const user = await client().users.fetch(testDiscordId);
+      await user.send('🧪 Test K13 Loyalty : les messages privés du bot fonctionnent.');
+      add(true, `MP de test envoyé à ${user.username}`);
+    } catch (e) {
+      add(false, e.code === 50007 ? 'MP refusé : ce membre bloque les MP des membres du serveur (Paramètres → Confidentialité)' : `MP impossible (${e.message})`);
+    }
+  }
+  add(true, `${dbGet('SELECT COUNT(*) AS c FROM users WHERE notify_dm=1 AND discord_id IS NOT NULL').c} membre(s) acceptent les MP`);
+  return out;
+}
+
+module.exports = { ready, deletePendingMessage, postMissingPending, diagnose, siteUrl, dmUser, announceChallenge, notifyResult, sendPendingToAdmins, resolvePendingMessage };

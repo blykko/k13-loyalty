@@ -72,6 +72,9 @@ function startBot() {
 
   client.once(Events.ClientReady, async c => {
     console.log(`[Bot Discord] Connecté en tant que ${c.user.tag}`);
+    if (!process.env.DISCORD_ADMIN_CHANNEL_ID) console.warn('[Bot Discord] DISCORD_ADMIN_CHANNEL_ID non défini : pas de validations sur Discord');
+    // Demandes créées pendant que le bot était hors ligne
+    setTimeout(() => require('./notify').postMissingPending().catch(e => console.warn('[Notify]', e.message)), 3000);
     vocalInterval = setInterval(() => {
       saveAllVocalSessions();
       const limit = Date.now() - MESSAGE_COOLDOWN_MS;
