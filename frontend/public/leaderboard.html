@@ -44,9 +44,10 @@
     <img src="/img/k13-logo.png" alt="K13" class="logo-img"/>
     <div>
       <div class="lb-title">Classement K13</div>
-      <div class="lb-sub">Top 50 des membres par points gagnés</div>
+      <div class="lb-sub" id="lb-sub">Top 50 des membres par points gagnés</div>
     </div>
   </div>
+  <div class="cat-tabs"><button class="cat-tab active" data-period="month">📅 Ce mois</button><button class="cat-tab" data-period="all">♾️ Depuis toujours</button></div>
   <div id="podium" class="podium hidden"></div>
   <div id="lb-list"><div class="empty">Chargement…</div></div>
 </div>
@@ -66,9 +67,18 @@ function avatar(u) {
 }
 const pts = n => Number(n || 0).toLocaleString('fr-FR');
 
-(async () => {
+document.querySelectorAll('[data-period]').forEach(b => b.onclick = () => {
+  document.querySelectorAll('[data-period]').forEach(x => x.classList.toggle('active', x === b));
+  load(b.dataset.period);
+});
+load('month');
+
+async function load(period) {
   let data;
-  try { data = await (await fetch('/api/user/leaderboard', { credentials: 'same-origin' })).json(); } catch { data = null; }
+  document.getElementById('podium').classList.add('hidden');
+  document.getElementById('lb-sub').textContent = period === 'month'
+    ? 'Points gagnés ce mois (hors jeux) · remise à zéro le 1er du mois' : 'Points gagnés depuis l\'inscription';
+  try { data = await (await fetch('/api/user/leaderboard?period=' + period, { credentials: 'same-origin' })).json(); } catch { data = null; }
   const list = document.getElementById('lb-list');
   if (!data?.ok) { list.innerHTML = '<div class="empty">Impossible de charger le classement.</div>'; return; }
   if (!data.leaderboard.length) { list.innerHTML = '<div class="empty">Aucun membre classé pour l\'instant.</div>'; return; }
@@ -87,11 +97,11 @@ const pts = n => Number(n || 0).toLocaleString('fr-FR');
     ${avatar(u)}
     <div class="lb-info">
       <div class="lb-name">${esc(u.discord_username || u.username)}${u.id === me ? ' (toi)' : ''}</div>
-      <div class="lb-meta">${RANK[u.rank] || ''} · ${u.challenges_done} défi${u.challenges_done > 1 ? 's' : ''}</div>
+      <div class="lb-meta">${RANK[u.rank] || ''}${u.streak ? ` · 🔥 ${u.streak}` : ''}</div>
     </div>
     <div><div class="lb-pts">${pts(u.points)}</div><div class="lb-pts-lbl">points</div></div>
   </div>`).join('');
-})();
+}
 </script>
 </body>
 </html>

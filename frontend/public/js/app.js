@@ -62,14 +62,14 @@ window.addEventListener('DOMContentLoaded', async () => {
 });
 
 async function loadAll() {
-  const [stats, shopRes, gwRes] = await Promise.all([api('GET', '/api/user/stats'), api('GET', '/api/user/shop'), api('GET', '/api/user/giveaways')]);
-  if (gwRes.ok) STATE.giveaways = gwRes.giveaways;
+  const [stats, shopRes] = await Promise.all([api('GET', '/api/user/stats'), api('GET', '/api/user/shop')]);
   if (stats.status === 401) return location.reload();
   if (stats.ok) {
     Object.assign(STATE, {
       user: stats.user, challenges: stats.challenges, codes: stats.codes, orders: stats.orders,
       progression: stats.progression, activity: stats.activity || {}, seConfigured: !!stats.seConfigured,
       twitterConfigured: !!stats.twitterConfigured,
+      daily: stats.daily, onboarding: stats.onboarding, month: stats.month, gamesDisabled: !!stats.gamesDisabled,
     });
   } else toast(stats.message || 'Erreur de chargement.', 'error');
   if (shopRes.ok) STATE.shopItems = shopRes.items;
@@ -129,7 +129,9 @@ function renderAll() {
   renderCodes();
   renderOrders();
   renderLive();
-  renderGiveaways();
+  renderDaily();
+  renderOnboarding();
+  el('games-pts').textContent = fmtNum(u.points) + ' pts';
 }
 
 function setAvatar(id, url, letter) {
@@ -299,20 +301,25 @@ function renderOrders() {
 // ── Actions (délégation d'événements : pas de JS inline, noms avec apostrophes OK) ──
 document.addEventListener('click', e => {
   const nav = e.target.closest('[data-page]');
-  if (nav) { showPage(nav.dataset.page); return; }
+  if (nav) { if (nav.tagName === 'A') e.preventDefault(); showPage(nav.dataset.page); return; }
   const tab = e.target.closest('.cat-tab');
   if (tab) { currentFilter = tab.dataset.cat; renderTabs(); renderChallengesPage(); return; }
   const a = e.target.closest('[data-action]');
   if (!a || a.disabled) return;
+  if (a.tagName === 'A' && a.getAttribute('href') === '#') e.preventDefault();
   const c = a.dataset.slug ? STATE.challenges.find(x => x.slug === a.dataset.slug) : null;
   switch (a.dataset.action) {
     case 'verify':      return withBusy(a, () => verifyChallenge(c));
     case 'redirect':    return withBusy(a, () => startRedirect(c));
     case 'buy':         return buyItem(STATE.shopItems.find(i => i.id === +a.dataset.id));
     case 'copy':        return copyCode(a.dataset.code, a);
-    case 'gw-join':     return withBusy(a, () => joinGiveaway(+a.dataset.id));
-    case 'gw-buy':      return buyGwTickets(+a.dataset.id);
-    case 'gw-replay':   return revealGiveaway(STATE.giveaways.find(g => g.id === +a.dataset.id), true);
+    case 'copy-ref':    return copyCode(el('ref-link').value, a);
+    case 'bet-chip':    return setBet(a.dataset.game, a.dataset.value);
+    case 'coin':        return withBusy(a, () => playCoin(a.dataset.choice));
+    case 'roulette':    return withBusy(a, () => playRoulette(a.dataset.type, a.dataset.type === 'numero' ? el('roulette-number').value : a.dataset.value));
+    case 'bj-start':    return withBusy(a, () => bjStart());
+    case 'bj':          return withBusy(a, () => bjMove(a.dataset.move));
+    case 'delete-account': return deleteAccount();
     case 'link-twitch': location.href = '/auth/twitch'; return;
     case 'link-twitter': location.href = '/auth/twitter'; return;
     case 'epic-open':   show('epic-form'); el('epic-username').focus(); return;
@@ -531,124 +538,193 @@ window.addEventListener('beforeunload', () => {
   if (watchSessionId) navigator.sendBeacon('/api/user/watchtime/end', new Blob([JSON.stringify({ sessionId: watchSessionId })], { type: 'application/json' }));
 });
 
-// ── Giveaways ──────────────────────────────────────────────────────────────────
-STATE.giveaways = [];
-const GW_STATUS = { upcoming: ['🕒 Bientôt', 'upcoming'], open: ['🟢 En cours', 'open'], drawing: ['🎲 Tirage en cours…', 'drawing'], ended: ['🏁 Terminé', 'ended'] };
+// ── Bonus quotidien & premiers pas ─────────────────────────────────────────────
+function renderDaily() {
+  const d = STATE.daily; if (!d) return;
+  el('daily-title').textContent = `Série de ${d.streak} jour${d.streak > 1 ? 's' : ''}`;
+  el('daily-flame').classList.toggle('cold', !d.streak);
+  el('daily-sub').textContent = d.claimed
+    ? `✅ Récupéré ! Reviens dans ${fmtUntil(d.resetsAt)} pour +${d.nextReward} pts.`
+    : `+${d.nextReward} pts à récupérer aujourd'hui${d.streak ? ' — ne casse pas ta série !' : ''}`
+      + (d.nextMilestone ? ` · Palier ${d.nextMilestone.day} jours : +${d.nextMilestone.bonus} pts` : '');
+  // 7 pastilles : jours déjà faits dans la semaine de série en cours
+  const pos = d.streak % 7 || (d.streak ? 7 : 0);
+  el('daily-week').innerHTML = Array.from({ length: 7 }, (_, i) => `<span class="dw ${i < pos ? 'on' : ''} ${i === 6 ? 'gift' : ''}">${i === 6 ? '🎁' : i + 1}</span>`).join('');
+  const btn = el('btn-daily');
+  btn.disabled = d.claimed;
+  btn.textContent = d.claimed ? '✓ Fait' : `🎁 +${d.nextReward} pts`;
+  btn.classList.toggle('pulse', !d.claimed);
+}
+el('btn-daily').addEventListener('click', async () => {
+  const btn = el('btn-daily'); btn.disabled = true;
+  const r = await api('POST', '/api/user/daily');
+  toast(r.message, r.ok ? 'success' : 'info');
+  if (r.ok && (r.bonus || r.streak === 1)) confetti();
+  showNewBadges(r.badges);
+  await loadAll();
+});
 
-function renderGiveaways() {
-  const list = STATE.giveaways || [];
-  const todo = list.filter(g => g.status === 'open' && !g.joined && g.eligible).length;
-  el('gw-badge').textContent = todo;
-  el('gw-badge').classList.toggle('hidden', !todo);
-  el('gw-list').innerHTML = list.map(gwCard).join('') || '<p class="empty-msg">Aucun giveaway pour le moment. Reste connecté, ça arrive bientôt 👀</p>';
-  tickCountdowns();
-  // Révélation animée des résultats non encore vus
-  const unseen = list.find(g => g.status === 'ended' && g.joined && !seenGw().includes(g.id));
-  if (unseen && document.querySelector('#page-giveaways.active')) revealGiveaway(unseen);
+function renderOnboarding() {
+  const o = STATE.onboarding; if (!o) return;
+  let dismissed = false; try { dismissed = localStorage.getItem('k13-onboard-done') === '1'; } catch {}
+  el('onboard-card').classList.toggle('hidden', dismissed || o.done === o.total);
+  el('onboard-count').textContent = `${o.done}/${o.total}`;
+  const go = { daily: '', twitch: 'data-action="link-twitch"', challenge: 'data-page="challenges"', referral: 'data-page="profile"' };
+  el('onboard-list').innerHTML = o.steps.map(s => `<li class="${s.done ? 'done' : ''}">${s.done ? '✅' : '⬜'} ${s.done ? esc(s.label) : `<a href="#" ${go[s.id]}>${esc(s.label)}</a>`}</li>`).join('');
+  if (o.done === o.total) try { localStorage.setItem('k13-onboard-done', '1'); } catch {}
 }
 
-function gwCard(g) {
-  const [label, cls] = GW_STATUS[g.status] || ['', ''];
-  const t = g.tickets;
-  const conds = g.conditions.length ? `<ul class="gw-conds">${g.conditions.map(c => `<li class="${c.ok ? 'ok' : 'ko'}">${c.ok ? '✅' : '❌'} ${esc(c.label)}</li>`).join('')}</ul>` : '<p class="muted">Aucune condition, tout le monde peut participer !</p>';
-  let action = '';
-  if (g.status === 'open' && !g.joined) action = g.eligible
-    ? `<button class="btn-primary full" data-action="gw-join" data-id="${g.id}">🎟️ Participer</button>`
-    : `<button class="btn-primary full" disabled>Remplis les conditions pour participer</button>`;
-  if (g.status === 'open' && g.joined) {
-    const left = g.max_bought - t.bought;
-    action = `<div class="gw-mine">
-      <div class="gw-tickets"><span class="gw-tk-num">${t.total}</span> ticket${t.total > 1 ? 's' : ''}<span class="gw-chance">≈ ${g.chance < 1 && g.chance > 0 ? '<1' : Math.round(g.chance)} % de chances</span></div>
-      <div class="gw-breakdown">🎟️ ${t.base} participation${t.rank ? ` · 🏅 +${t.rank} rang` : ''}${t.challenges ? ` · 🎯 +${t.challenges} défis` : ''}${t.bought ? ` · ⭐ +${t.bought} achetés` : ''}</div>
-      ${g.bonus_per_challenge ? `<div class="gw-hint">🎯 +${g.bonus_per_challenge} ticket par défi validé d'ici la fin${g.max_challenge_bonus ? ` (max ${g.max_challenge_bonus}, ${Math.max(0, g.max_challenge_bonus - t.challenges)} restant)` : ''} → <a data-page="challenges" href="#challenges">voir les défis</a></div>` : ''}
-      ${g.ticket_cost && left > 0 ? `<div class="gw-buy"><select class="input" id="gw-qty-${g.id}">${Array.from({ length: Math.min(left, 10) }, (_, i) => `<option value="${i + 1}">${i + 1} ticket${i ? 's' : ''} · ${fmtNum((i + 1) * g.ticket_cost)} pts</option>`).join('')}</select><button class="btn-sm" data-action="gw-buy" data-id="${g.id}">Acheter</button></div>` : ''}
-    </div>`;
-  }
-  if (g.status === 'ended') {
-    action = `<div class="gw-winners">${g.winners.length ? g.winners.map(w => `<span class="gw-winner ${w.user_id === STATE.user.id ? 'me' : ''}">🏆 ${esc(w.discord_username || w.username)}</span>`).join('') : '<span class="muted">Aucun gagnant</span>'}</div>
-      ${g.won ? '<div class="gw-won">🎉 Tu as gagné ! L\'équipe K13 te contacte sur Discord.</div>' : ''}
-      ${g.joined ? `<button class="btn-ghost sm" data-action="gw-replay" data-id="${g.id}">🎬 Revoir le tirage</button>` : ''}`;
-  }
-  const end = g.status === 'upcoming' ? g.starts_at : g.ends_at;
-  return `<article class="gw-card ${cls} ${g.won ? 'won' : ''}">
-    ${g.image_url ? `<div class="gw-img" style="background-image:url('${esc(g.image_url)}')"></div>` : '<div class="gw-img gw-img-ph">🎁</div>'}
-    <div class="gw-body">
-      <div class="gw-top"><span class="gw-status ${cls}">${label}</span>${g.status !== 'ended' ? `<span class="gw-countdown" data-end="${end}">…</span>` : `<span class="muted">${fmtDate(g.ends_at)}</span>`}</div>
-      <h2 class="gw-title">${esc(g.title)}</h2>
-      <div class="gw-prize">🏆 ${esc(g.prize)}${g.winners_count > 1 ? ` · ${g.winners_count} gagnants` : ''}</div>
-      ${g.description ? `<p class="gw-desc">${esc(g.description)}</p>` : ''}
-      <div class="gw-stats"><span>👥 ${g.participants} participant${g.participants > 1 ? 's' : ''}</span><span>🎟️ ${g.total_tickets} tickets en jeu</span></div>
-      ${g.status !== 'ended' ? `<div class="gw-sub">Conditions</div>${conds}` : ''}
-      ${action}
-    </div>
-  </article>`;
+function showNewBadges(list) {
+  for (const b of list || []) setTimeout(() => toast(`🏅 Nouveau badge : ${b.icon} ${b.name} !`, 'success'), 1200);
 }
 
-function tickCountdowns() {
-  let needReload = false;
-  document.querySelectorAll('.gw-countdown').forEach(n => {
-    const s = Math.floor((new Date(n.dataset.end) - Date.now()) / 1000);
-    if (s <= 0) { n.textContent = 'maintenant'; needReload = true; return; }
-    const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60), sec = s % 60;
-    n.textContent = (n.closest('.upcoming') ? 'Début dans ' : 'Fin dans ') + (d ? `${d}j ${h}h ${m}min` : `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`);
+// ── Profil ─────────────────────────────────────────────────────────────────────
+async function loadProfile() {
+  const r = await api('GET', '/api/user/profile');
+  if (!r.ok) return;
+  const ref = r.referral;
+  el('ref-link').value = ref.link;
+  el('ref-desc').textContent = `Partage ton lien : quand un ami s'inscrit et valide son premier défi, tu gagnes +${ref.referrerReward} pts et lui +${ref.refereeReward} pts.`;
+  el('ref-count').textContent = `${ref.count} filleul${ref.count > 1 ? 's' : ''} · ${ref.rewarded} actif${ref.rewarded > 1 ? 's' : ''}`;
+  el('rank-pos').innerHTML = `
+    <div><span class="rp-num">${r.month ? '#' + r.month.position : '–'}</span><span class="rp-lbl">Ce mois${r.month ? ` · ${fmtNum(r.month.points)} pts` : ''}</span></div>
+    <div><span class="rp-num">${r.all ? '#' + r.all.position : '–'}</span><span class="rp-lbl">Depuis toujours${r.all ? ` · ${fmtNum(r.all.points)} pts` : ''}</span></div>`;
+  const have = r.badges.filter(b => b.unlocked).length;
+  el('badge-count').textContent = `${have}/${r.badges.length}`;
+  el('badges-grid').innerHTML = r.badges.map(b => `<div class="badge ${b.unlocked ? 'on' : ''}" title="${esc(b.desc)}">
+    <div class="badge-ico">${b.unlocked ? b.icon : '🔒'}</div><div class="badge-name">${esc(b.name)}</div><div class="badge-desc">${esc(b.desc)}</div></div>`).join('');
+  const reasonIco = { challenge: '🎯', daily: '🔥', referral: '🤝', welcome: '👋', shop: '🛒', game: '🎲', admin: '🛠️', revoke: '↩️' };
+  el('history-body').innerHTML = r.history.map(h => `<tr>
+    <td>${reasonIco[h.reason] || '•'} ${esc(h.label || h.reason)}</td>
+    <td class="${h.delta > 0 ? 'pos' : 'neg'}" style="text-align:right;font-weight:700">${h.delta > 0 ? '+' : ''}${fmtNum(h.delta)}</td>
+    <td class="muted" style="text-align:right">${new Date(h.created_at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })}</td></tr>`).join('')
+    || '<tr><td class="empty-td">Aucun mouvement pour l\'instant.</td></tr>';
+  el('games-off').checked = STATE.gamesDisabled;
+}
+el('games-off').addEventListener('change', async e => {
+  const r = await api('POST', '/api/user/settings', { games_disabled: e.target.checked });
+  toast(r.ok ? (e.target.checked ? '🚫 Jeux désactivés pour ton compte.' : '🎲 Jeux réactivés.') : r.message, r.ok ? 'success' : 'error');
+  if (r.ok) STATE.gamesDisabled = e.target.checked; else e.target.checked = !e.target.checked;
+});
+function deleteAccount() {
+  confirmModal('🗑️', 'Supprimer ton compte ?', 'Tous tes points, défis, codes promo et ton historique seront définitivement effacés. Cette action est irréversible.', 'Continuer', async () => {
+    const typed = prompt('Tape SUPPRIMER pour confirmer la suppression définitive :');
+    if (typed !== 'SUPPRIMER') return toast('Suppression annulée.');
+    const r = await api('POST', '/api/user/delete', { confirm: 'SUPPRIMER' });
+    if (r.ok) { alert('Ton compte a été supprimé.'); location.replace('/'); } else toast(r.message, 'error');
   });
-  // Le tirage est fait par le serveur dans les 30 s : on recharge un peu après
-  if (needReload && !tickCountdowns.pending) { tickCountdowns.pending = true; setTimeout(async () => { tickCountdowns.pending = false; await loadAll(); }, 35000); }
-}
-setInterval(tickCountdowns, 1000);
-
-async function joinGiveaway(id) {
-  const res = await api('POST', `/api/user/giveaways/${id}/join`);
-  toast(res.message, res.ok ? 'success' : 'error');
-  if (res.ok) loadAll();
-}
-function buyGwTickets(id) {
-  const g = STATE.giveaways.find(x => x.id === id), qty = +el(`gw-qty-${id}`).value;
-  confirmModal('⭐', `Acheter ${qty} ticket${qty > 1 ? 's' : ''} ?`, `${fmtNum(qty * g.ticket_cost)} pts seront débités (il te restera ${fmtNum(STATE.user.points - qty * g.ticket_cost)} pts). Non remboursable, sauf annulation du giveaway.`,
-    'Acheter', async () => {
-      const res = await api('POST', `/api/user/giveaways/${id}/tickets`, { qty });
-      toast(res.message, res.ok ? 'success' : 'error');
-      if (res.ok) loadAll();
-    });
 }
 
-function seenGw() { try { return JSON.parse(localStorage.getItem('k13-gw-seen') || '[]'); } catch { return []; } }
-// Animation de tirage : les pseudos défilent en ralentissant puis s'arrêtent sur le gagnant
-function revealGiveaway(g, replay = false) {
-  if (!g || (revealGiveaway.running && !replay)) return;
-  revealGiveaway.running = true;
-  try { localStorage.setItem('k13-gw-seen', JSON.stringify([...new Set([...seenGw(), g.id])].slice(-100))); } catch {}
-  const winner = g.winners[0];
-  const names = [...new Set([...(g.sample || []), ...g.winners.map(w => w.discord_username || w.username)])];
-  if (!names.length) names.push('…');
-  el('gwr-title').textContent = g.title;
-  el('gwr-desc').textContent = '';
-  el('gwr-name').className = 'gwr-name';
-  hide('gwr-close'); show('gw-reveal');
-  let i = 0, delay = 60;
-  const step = () => {
-    el('gwr-name').textContent = names[i++ % names.length];
-    delay *= 1.12;
-    if (delay < 520) return setTimeout(step, delay);
-    el('gwr-name').textContent = winner ? (winner.discord_username || winner.username) : 'Aucun gagnant';
-    el('gwr-name').classList.add('final');
-    const others = g.winners.slice(1).map(w => w.discord_username || w.username);
-    el('gwr-desc').textContent = g.won ? `🎉 C'est toi ! Tu remportes ${g.prize} !`
-      : winner ? `remporte ${g.prize}${others.length ? ` · aussi gagnants : ${others.join(', ')}` : ''}. Pas cette fois… retente ta chance au prochain !` : '';
-    if (g.won) confetti();
-    show('gwr-close');
-    revealGiveaway.running = false;
-  };
-  step();
+// ── Jeux ───────────────────────────────────────────────────────────────────────
+let GAMES = { limits: null };
+const CHIPS = [10, 50, 100, 250, 500];
+function renderBetRows() {
+  document.querySelectorAll('.bet-row').forEach(row => {
+    const g = row.dataset.game;
+    if (row.dataset.ready) return;
+    row.dataset.ready = '1';
+    row.innerHTML = `<label class="bet-lbl">Mise</label><input class="input bet-input" type="number" id="bet-${g}" min="10" max="500" step="10" value="${getBetPref(g)}"/>
+      ${CHIPS.map(v => `<button class="chip" data-action="bet-chip" data-game="${g}" data-value="${v}">${v}</button>`).join('')}`;
+    el(`bet-${g}`).addEventListener('change', e => { try { localStorage.setItem('k13-bet-' + g, e.target.value); } catch {} });
+  });
 }
-el('gwr-close').addEventListener('click', () => hide('gw-reveal'));
+function getBetPref(g) { try { return +localStorage.getItem('k13-bet-' + g) || 50; } catch { return 50; } }
+function setBet(g, v) { el(`bet-${g}`).value = v; try { localStorage.setItem('k13-bet-' + g, v); } catch {} }
+const betOf = g => parseInt(el(`bet-${g}`).value, 10) || 0;
+
+async function loadGames() {
+  renderBetRows();
+  const r = await api('GET', '/api/user/games');
+  if (!r.ok) return;
+  GAMES.limits = r.limits;
+  updateBalance(r.balance);
+  renderGamesInfo();
+  if (r.blackjack) renderBJ(r.blackjack); else renderBJ(null);
+}
+function renderGamesInfo() {
+  const l = GAMES.limits; if (!l) return;
+  el('games-info').innerHTML = STATE.gamesDisabled
+    ? '🚫 Les jeux sont désactivés sur ton compte. <a href="#" data-page="profile">Les réactiver</a>'
+    : `Mise de ${l.minBet} à ${l.maxBet} pts · <strong>${l.left}</strong> partie${l.left > 1 ? 's' : ''} restante${l.left > 1 ? 's' : ''} aujourd'hui`;
+}
+function updateBalance(points) {
+  if (!STATE.user || points === undefined) return;
+  STATE.user.points = points;
+  ['nav-pts', 'games-pts', 'shop-pts'].forEach(id => { el(id).textContent = fmtNum(points) + ' pts'; });
+  el('hero-pts').textContent = fmtNum(points);
+}
+function afterGame(r, resultId) {
+  if (r.limits) { GAMES.limits = r.limits; renderGamesInfo(); }
+  if (r.balance !== undefined) updateBalance(r.balance);
+  const box = el(resultId);
+  box.className = 'game-result ' + (r.ok === false ? 'err' : r.win ? 'win' : r.outcome === 'push' ? '' : 'lose');
+  box.textContent = r.message;
+  if (r.win && (r.payout >= r.bet * 3 || r.outcome === 'blackjack')) confetti();
+  if (r.badge) showNewBadges([{ icon: r.badge === 'jackpot' ? '🎰' : '🃏', name: r.badge === 'jackpot' ? 'Jackpot' : 'Blackjack !' }]);
+}
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+async function playCoin(choice) {
+  const coin = el('coin');
+  coin.classList.remove('flip'); void coin.offsetWidth; coin.classList.add('flip');
+  const [r] = await Promise.all([api('POST', '/api/user/games/coinflip', { bet: betOf('coin'), choice }), sleep(900)]);
+  if (r.ok) coin.querySelector('.coin-face').textContent = r.result === 'pile' ? 'P' : 'F';
+  coin.classList.remove('flip');
+  afterGame(r, 'coin-result');
+}
+
+const RED = new Set([1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36]);
+const numColor = n => n === 0 ? 'green' : RED.has(n) ? 'red' : 'black';
+async function playRoulette(type, value) {
+  const wheel = el('wheel'), num = el('wheel-num');
+  const req = api('POST', '/api/user/games/roulette', { bet: betOf('roulette'), type, value });
+  wheel.classList.add('spin');
+  // Défilement des numéros en ralentissant pendant la requête
+  let delay = 40;
+  while (delay < 220) {
+    const n = Math.floor(Math.random() * 37);
+    num.textContent = n; wheel.dataset.color = numColor(n);
+    await sleep(delay); delay *= 1.15;
+  }
+  const r = await req;
+  wheel.classList.remove('spin');
+  if (r.ok) { num.textContent = r.number; wheel.dataset.color = numColor(r.number); }
+  afterGame(r, 'roulette-result');
+}
+
+function cardHTML(c, i = 0) {
+  if (c === '🂠') return `<div class="pcard back" style="animation-delay:${i * 80}ms"></div>`;
+  const suit = c.slice(-1), rank = c.slice(0, -1), red = suit === '♥' || suit === '♦';
+  return `<div class="pcard ${red ? 'red' : ''}" style="animation-delay:${i * 80}ms"><span>${rank}</span><span class="suit">${suit}</span></div>`;
+}
+function renderBJ(g) {
+  el('bj-dealer').innerHTML = g ? g.dealer.map(cardHTML).join('') : '';
+  el('bj-player').innerHTML = g ? g.player.map(cardHTML).join('') : '';
+  el('bj-dealer-val').textContent = g ? `(${g.dealerValue}${g.done ? '' : '+?'})` : '';
+  el('bj-player-val').textContent = g ? `(${g.playerValue})` : '';
+  const playing = g && !g.done;
+  el('bj-actions').classList.toggle('hidden', !playing);
+  el('bj-start-row').classList.toggle('hidden', !!playing);
+  el('bj-bet').classList.toggle('hidden', !!playing);
+  if (playing) el('bj-double').disabled = !g.canDouble;
+}
+async function bjStart() {
+  const r = await api('POST', '/api/user/games/blackjack/start', { bet: betOf('bj') });
+  if (r.ok) renderBJ(r);
+  afterGame(r, 'bj-result');
+}
+async function bjMove(move) {
+  const r = await api('POST', `/api/user/games/blackjack/${move}`);
+  if (r.ok) renderBJ(r);
+  afterGame(r, 'bj-result');
+}
 
 function confetti() {
   const colors = ['#F59E0B', '#2563EB', '#10B981', '#EF4444', '#A855F7'];
-  for (let i = 0; i < 80; i++) {
+  for (let i = 0; i < 70; i++) {
     const c = document.createElement('i');
     c.className = 'confetti';
-    c.style.cssText = `left:${Math.random() * 100}vw;background:${colors[i % colors.length]};animation-delay:${Math.random() * .6}s;transform:rotate(${Math.random() * 360}deg)`;
+    c.style.cssText = `left:${Math.random() * 100}vw;background:${colors[i % colors.length]};animation-delay:${Math.random() * .5}s`;
     document.body.appendChild(c);
     setTimeout(() => c.remove(), 3500);
   }
@@ -659,7 +735,8 @@ function showPage(id, push = true) {
   if (!el('page-' + id)) id = 'dashboard';
   document.querySelectorAll('.page').forEach(p => p.classList.toggle('active', p.id === 'page-' + id));
   document.querySelectorAll('.nav-link[data-page]').forEach(b => b.classList.toggle('active', b.dataset.page === id));
-  if (id === 'giveaways') setTimeout(renderGiveaways, 50);
+  if (id === 'games') loadGames();
+  if (id === 'profile') loadProfile();
   if (push && location.hash.slice(1) !== id) history.pushState({}, '', id === 'dashboard' ? location.pathname : '#' + id);
   window.scrollTo({ top: 0 });
 }

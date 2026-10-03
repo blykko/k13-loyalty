@@ -44,6 +44,8 @@ async function purchase(userId, itemId) {
   // Débit atomique (évite le double achat par double-clic)
   const debit = dbRun('UPDATE users SET points=points-? WHERE id=? AND points>=?', [item.cost_points, userId, item.cost_points]);
   if (!debit.changes) return { ok: false, message: 'Points insuffisants.' };
+  const { logPoints } = require('./challenges');
+  logPoints(userId, -item.cost_points, 'shop', item.name);
   if (item.stock > 0) {
     const st = dbRun('UPDATE shop_items SET stock=stock-1 WHERE id=? AND stock>0', [itemId]);
     if (!st.changes) {
@@ -53,6 +55,7 @@ async function purchase(userId, itemId) {
   }
   const refund = () => {
     dbRun('UPDATE users SET points=points+? WHERE id=?', [item.cost_points, userId]);
+    logPoints(userId, item.cost_points, 'shop', `Remboursement ${item.name}`);
     if (item.stock > 0) dbRun('UPDATE shop_items SET stock=stock+1 WHERE id=?', [itemId]);
   };
 

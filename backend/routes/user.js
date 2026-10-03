@@ -14,17 +14,15 @@ const { requireUser } = require('../middleware/auth');
 const router = express.Router();
 
 // ── Classement public (page /leaderboard) ──────────────────────────────────────
-let lbCache = { at: 0, data: null };
+const loyalty = require('../services/loyalty');
+const games   = require('../services/games');
+
+// ── Classement public (page /leaderboard) : ?period=month|all ─────────────────
+const lbCache = {};
 router.get('/leaderboard', (req, res) => {
-  if (!lbCache.data || Date.now() - lbCache.at > 60_000) {
-    lbCache = { at: Date.now(), data: dbAll(`
-      SELECT u.id, u.username, u.discord_username, u.discord_id, u.discord_avatar, u.rank,
-             u.lifetime_points AS points,
-             (SELECT COUNT(*) FROM user_challenges uc WHERE uc.user_id=u.id AND uc.verified=1) AS challenges_done
-      FROM users u WHERE u.lifetime_points > 0
-      ORDER BY u.lifetime_points DESC, u.created_at ASC LIMIT 50`) };
-  }
-  res.json({ ok: true, leaderboard: lbCache.data, me: req.session?.userId || null });
+  const period = req.query.period === 'all' ? 'all' : 'month';
+  if (!lbCache[period] || Date.now() - lbCache[period].at > 60_000) lbCache[period] = { at: Date.now(), data: loyalty.leaderboard(period, 50) };
+  res.json({ ok: true, period, leaderboard: lbCache[period].data, me: req.session?.userId || null });
 });
 
 router.use(requireUser);
@@ -57,7 +55,9 @@ router.get('/stats', async (req, res) => {
     ch.autoCheck(userId);
     const stats = ch.getUserStats(userId);
     if (!stats) return res.status(401).json({ ok: false, message: 'Compte introuvable.' });
-    res.json({ ok: true, ...stats });
+    const user = dbGet('SELECT * FROM users WHERE id=?', [userId]);
+    res.json({ ok: true, ...stats, daily: loyalty.dailyStatus(user), onboarding: loyalty.onboarding(userId),
+      month: loyalty.positionOf(userId, 'month'), gamesDisabled: !!user.games_disabled });
   } catch (e) {
     console.error('[stats]', e);
     res.status(500).json({ ok: false, message: 'Erreur serveur.' });
@@ -109,22 +109,39 @@ router.post('/epic', (req, res) => {
   res.json({ ok: true, message: 'Infos Epic Games enregistrées.' });
 });
 
-// ── Giveaways ──────────────────────────────────────────────────────────────────
-const giveaways = require('../services/giveaways');
-router.get('/giveaways', async (req, res) => {
-  try { res.json({ ok: true, giveaways: await giveaways.listForUser(req.session.userId) }); }
-  catch (e) { console.error('[giveaways]', e); res.status(500).json({ ok: false, message: 'Erreur serveur.' }); }
+// ── Fidélisation ───────────────────────────────────────────────────────────────
+router.post('/daily', (req, res) => res.json(loyalty.claimDaily(req.session.userId)));
+router.get('/profile', (req, res) => {
+  const id = req.session.userId;
+  res.json({ ok: true, badges: loyalty.badgesOf(id), history: loyalty.history(id, 40), referral: loyalty.referralInfo(id),
+    month: loyalty.positionOf(id, 'month'), all: loyalty.positionOf(id, 'all') });
 });
-router.post('/giveaways/:id/join', async (req, res) => {
-  res.json(await giveaways.join(parseInt(req.params.id, 10), req.session.userId));
+router.get('/export', (req, res) => {
+  res.setHeader('Content-Disposition', 'attachment; filename="k13-loyalty-mes-donnees.json"');
+  res.json(loyalty.exportData(req.session.userId));
 });
-router.post('/giveaways/:id/tickets', (req, res) => {
-  res.json(giveaways.buyTickets(parseInt(req.params.id, 10), req.session.userId, req.body?.qty));
+router.post('/delete', (req, res) => {
+  if (req.body?.confirm !== 'SUPPRIMER') return res.status(400).json({ ok: false, message: 'Tape SUPPRIMER pour confirmer.' });
+  loyalty.deleteAccount(req.session.userId);
+  req.session.destroy(() => { res.clearCookie('connect.sid'); res.json({ ok: true, message: 'Compte supprimé.' }); });
 });
+
+// ── Jeux ───────────────────────────────────────────────────────────────────────
+router.get('/games', (req, res) => {
+  const id = req.session.userId;
+  res.json({ ok: true, limits: games.limits(id), blackjack: games.blackjackState(id),
+    balance: dbGet('SELECT points FROM users WHERE id=?', [id]).points });
+});
+const withBadges = (id, r) => { if (r.ok) r.limits = games.limits(id); return r; };
+router.post('/games/coinflip', (req, res) => res.json(withBadges(req.session.userId, games.coinflip(req.session.userId, req.body?.bet, req.body?.choice))));
+router.post('/games/roulette', (req, res) => res.json(withBadges(req.session.userId, games.roulette(req.session.userId, req.body?.bet, req.body?.type, req.body?.value))));
+router.post('/games/blackjack/start', (req, res) => res.json(withBadges(req.session.userId, games.blackjackStart(req.session.userId, req.body?.bet))));
+router.post('/games/blackjack/:action(hit|stand|double)', (req, res) => res.json(withBadges(req.session.userId, games.blackjackAction(req.session.userId, req.params.action))));
 
 // ── Préférences ────────────────────────────────────────────────────────────────
 router.post('/settings', (req, res) => {
   if (req.body?.notify_dm !== undefined) dbRun('UPDATE users SET notify_dm=? WHERE id=?', [req.body.notify_dm ? 1 : 0, req.session.userId]);
+  if (req.body?.games_disabled !== undefined) dbRun('UPDATE users SET games_disabled=? WHERE id=?', [req.body.games_disabled ? 1 : 0, req.session.userId]);
   res.json({ ok: true, message: 'Préférences enregistrées.' });
 });
 

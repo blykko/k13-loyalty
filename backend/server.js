@@ -4,7 +4,7 @@ require('dotenv').config();
 const express = require('express');
 const session = require('express-session');
 const path    = require('path');
-const { initDb, dbGet, dbRun, dbFlush } = require('./models/db');
+const { initDb, dbGet, dbRun, dbFlush, dbBackup } = require('./models/db');
 const discordBot = require('./services/discord-bot');
 
 const PUBLIC = path.join(__dirname, '../frontend/public');
@@ -78,6 +78,8 @@ initDb().then(() => {
 
   // index.html jamais mis en cache pour que /auth/me soit toujours rappelé après l'OAuth
   const sendIndex = (req, res) => {
+    // Lien de parrainage : /?ref=CODE (gardé en session jusqu'à l'inscription)
+    if (typeof req.query.ref === 'string' && /^[A-Za-z0-9]{6}$/.test(req.query.ref) && !req.session.userId) req.session.ref = req.query.ref.toUpperCase();
     res.setHeader('Cache-Control', 'no-store');
     res.sendFile(path.join(PUBLIC, 'index.html'));
   };
@@ -107,10 +109,10 @@ initDb().then(() => {
     res.status(status).json({ ok: false, message: err.code === 'LIMIT_FILE_SIZE' ? 'Fichier trop lourd (8 Mo max).' : 'Erreur serveur.' });
   });
 
-  // Tirage automatique des giveaways arrivés à échéance
-  const giveaways = require('./services/giveaways');
-  setInterval(() => giveaways.tick(), 30_000);
-  setTimeout(() => giveaways.tick(), 5_000);
+  // Sauvegarde de la base au démarrage puis toutes les 6 h (un fichier par jour)
+  const backup = () => { try { console.log('[Backup]', dbBackup()); } catch (e) { console.error('[Backup] échec :', e.message); } };
+  setTimeout(backup, 10_000);
+  setInterval(backup, 6 * 3600_000);
 
   discordBot.startBot();
   const server = app.listen(PORT, () => {

@@ -37,14 +37,21 @@ function updateRank(userId) {
   discord.syncRoleForUser(userId).catch(() => {});
 }
 
-function addPoints(userId, pts) {
+// Journal de tous les mouvements de points (historique, classement du mois)
+function logPoints(userId, delta, reason, label = null) {
+  if (delta) dbRun('INSERT INTO points_log (user_id,delta,reason,label) VALUES (?,?,?,?)', [userId, delta, reason, label]);
+}
+// Points gagnés : comptent pour le rang (lifetime_points)
+function addPoints(userId, pts, reason = 'challenge', label = null) {
   if (!pts || pts <= 0) return;
   dbRun("UPDATE users SET points=points+?, lifetime_points=lifetime_points+?, last_seen=datetime('now') WHERE id=?", [pts, pts, userId]);
+  logPoints(userId, pts, reason, label);
   updateRank(userId);
 }
-function removePoints(userId, pts) {
+function removePoints(userId, pts, reason = 'revoke', label = null) {
   if (!pts || pts <= 0) return;
   dbRun('UPDATE users SET points=MAX(0,points-?), lifetime_points=MAX(0,lifetime_points-?) WHERE id=?', [pts, pts, userId]);
+  logPoints(userId, -pts, reason, label);
   updateRank(userId);
 }
 
@@ -84,7 +91,9 @@ function completeChallenge(userId, ch, periodKey = getPeriodKey(ch), note = null
     dbRun('INSERT INTO user_challenges (user_id,challenge_id,verified,period_key,admin_note) VALUES (?,?,1,?,?)',
       [userId, ch.id, periodKey, note]);
   }
-  addPoints(userId, ch.points);
+  addPoints(userId, ch.points, 'challenge', ch.name);
+  // Parrainage (1er défi du filleul) + badges
+  try { require('./loyalty').afterEvent(userId, 'challenge'); } catch (e) { console.warn('[loyalty]', e.message); }
   return true;
 }
 
@@ -391,7 +400,7 @@ function nextPeriodIso(repeatSeconds) {
 }
 
 module.exports = {
-  RANKS, rankFor, nextRank, updateRank, addPoints, removePoints,
+  RANKS, rankFor, nextRank, updateRank, addPoints, removePoints, logPoints,
   getPeriodKey, getEntry, markDone, completeChallenge, getProgress, autoCheck,
   verifyChallenge, validateRedirectTimer, submitScreenshot, getUserStats, needsAdminReview,
   approvePending, rejectPending, TWITTER_TYPES,
