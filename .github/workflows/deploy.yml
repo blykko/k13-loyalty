@@ -44,7 +44,14 @@ jobs:
             # Dossier du projet sur le VPS (modifiable via la variable de dépôt APP_DIR)
             cd "${{ vars.APP_DIR || '/home/ubuntu/k13-loyalty/k13-loyalty' }}"
             # Si le dossier est un clone git : récupère le code (cas d'un compose en "build: .")
-            if [ -d .git ]; then git pull --ff-only || echo "git pull impossible, on continue"; fi
+            # Git est lancé avec le propriétaire du dossier (ex. ubuntu) même si la connexion SSH
+            # se fait en root : sinon "dubious ownership" et fichiers créés en root.
+            if [ -d .git ]; then
+              OWNER=$(stat -c %U .)
+              if [ "$(id -un)" != "$OWNER" ] && command -v sudo >/dev/null; then sudo -u "$OWNER" git pull --ff-only
+              else git -c safe.directory='*' pull --ff-only; fi
+              echo "Code déployé : $(git -c safe.directory='*' log --oneline -1)"
+            fi
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
             docker compose pull k13-loyalty || true
             docker compose up -d --build --no-deps k13-loyalty
