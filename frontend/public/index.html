@@ -43,6 +43,7 @@
     <div class="nav-links" role="tablist">
       <button class="nav-link active" data-page="dashboard"><span class="nl-ico">🏠</span><span>Accueil</span></button>
       <button class="nav-link" data-page="challenges"><span class="nl-ico">🎯</span><span>Défis</span><span class="nav-badge hidden" id="nav-badge"></span></button>
+      <button class="nav-link" data-page="giveaways"><span class="nl-ico">🎁</span><span>Giveaways</span><span class="nav-badge hidden" id="gw-badge"></span></button>
       <button class="nav-link" data-page="shop"><span class="nl-ico">🛒</span><span>Boutique</span></button>
       <a class="nav-link" href="/leaderboard"><span class="nl-ico">🏆</span><span>Classement</span></a>
     </div>
@@ -111,6 +112,19 @@
   </main>
 
   <!-- SHOP -->
+  <main class="page" id="page-giveaways">
+    <div class="page-head">
+      <h1 class="page-title">Giveaways</h1>
+      <span class="section-sub">Plus tu as de tickets, plus tu as de chances de gagner 🍀</span>
+    </div>
+    <div id="gw-list" class="gw-list"></div>
+    <div class="gw-howto">
+      <strong>Comment gagner plus de tickets ?</strong>
+      <span>🎟️ 1 ticket en participant</span><span>🥈 +1 ticket Silver · 🥇 +2 tickets Gold</span>
+      <span>🎯 Tickets bonus pour chaque défi validé pendant le giveaway</span><span>⭐ Tickets en plus contre des points</span>
+    </div>
+  </main>
+
   <main class="page" id="page-shop">
     <div class="page-head">
       <h1 class="page-title">Boutique</h1>
@@ -151,6 +165,17 @@
     </form>
     <button class="btn-primary full hidden" id="btn-modal-confirm"></button>
     <button class="btn-ghost full" id="btn-modal-close">Fermer</button>
+  </div>
+</div>
+
+<!-- Tirage animé -->
+<div id="gw-reveal" class="modal-overlay hidden">
+  <div class="modal gw-reveal">
+    <div class="modal-icon">🎁</div>
+    <div class="modal-title" id="gwr-title">Tirage</div>
+    <div class="gwr-wheel"><div class="gwr-name" id="gwr-name">…</div></div>
+    <div class="modal-desc" id="gwr-desc"></div>
+    <button class="btn-primary full hidden" id="gwr-close">Fermer</button>
   </div>
 </div>
 

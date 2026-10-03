@@ -47,7 +47,7 @@ el('btn-dark').addEventListener('click', () => {
 function syncDarkBtn() { el('btn-dark').textContent = document.documentElement.classList.contains('dark') ? '☀️' : '🌙'; }
 
 // ── Navigation ─────────────────────────────────────────────────────────────────
-const LOADERS = { overview: loadOverview, pending: loadPending, users: loadUsers, challenges: loadChallenges, shop: loadShop, codes: loadCodes, ranking: loadRanking, settings: () => {} };
+const LOADERS = { giveaways: loadGiveaways, overview: loadOverview, pending: loadPending, users: loadUsers, challenges: loadChallenges, shop: loadShop, codes: loadCodes, ranking: loadRanking, settings: () => {} };
 function adminPage(id, push = true) {
   if (!LOADERS[id]) id = 'overview';
   currentPage = id;
@@ -336,6 +336,117 @@ function periodLabel(c) {
   if (c.repeat_seconds === 604800) return CATEGORIES.weekly;
   if (c.repeat_seconds === 2592000) return CATEGORIES.monthly;
   return `🔄 ${Math.round(c.repeat_seconds / 86400 * 10) / 10} j`;
+}
+
+// ── Giveaways ──────────────────────────────────────────────────────────────────
+let allGw = [];
+const GW_LABEL = { upcoming: '<span class="pill">🕒 À venir</span>', open: '<span class="pill active">🟢 En cours</span>', drawing: '<span class="pill pending">🎲 Tirage…</span>', ended: '<span class="pill used">🏁 Terminé</span>', cancelled: '<span class="pill expired">Annulé</span>' };
+async function loadGiveaways() {
+  const [res, chs] = await Promise.all([api('GET', '/api/admin/giveaways'), allChallenges.length ? null : api('GET', '/api/admin/challenges')]);
+  if (chs?.ok) allChallenges = chs.challenges;
+  if (!res.ok) return;
+  allGw = res.giveaways;
+  el('gw-tbl').innerHTML = allGw.map(g => `<tr>
+    <td><strong>${esc(g.title)}</strong><br><small class="muted">🏆 ${esc(g.prize)}${g.winners_count > 1 ? ` · ${g.winners_count} gagnants` : ''}</small></td>
+    <td>${GW_LABEL[g.status] || esc(g.status)}</td>
+    <td class="muted">${fmtDateTime(g.ends_at)}</td>
+    <td>${g.participants}</td><td>${g.total_tickets}</td>
+    <td>${g.winners.map(w => `🏆 ${esc(w.discord_username || w.username)}`).join('<br>') || '–'}</td>
+    <td><div class="actions">
+      <button class="btn-sm" data-gw-entries="${g.id}">👥</button>
+      ${g.raw_status === 'active' ? `<button class="btn-sm" data-gw-edit="${g.id}">✏️</button><button class="btn-sm" data-gw-draw="${g.id}">🎲 Tirer</button><button class="btn-sm" data-gw-cancel="${g.id}" style="color:var(--red)">Annuler</button>` : ''}
+      ${g.raw_status === 'ended' ? `<button class="btn-sm" data-gw-reroll="${g.id}" title="Tirer un gagnant supplémentaire (si un gagnant ne répond pas)">🔁 Relancer</button>` : ''}
+    </div></td>
+  </tr>`).join('') || '<tr><td colspan="7" class="empty-td">Aucun giveaway. Crée le premier !</td></tr>';
+}
+el('btn-new-gw').addEventListener('click', () => giveawayForm(null));
+el('gw-tbl').addEventListener('click', async e => {
+  const b = e.target.closest('button'); if (!b) return;
+  const id = +(b.dataset.gwEntries || b.dataset.gwEdit || b.dataset.gwDraw || b.dataset.gwCancel || b.dataset.gwReroll);
+  const g = allGw.find(x => x.id === id); if (!g) return;
+  if (b.dataset.gwEdit) return giveawayForm(g);
+  if (b.dataset.gwEntries) return gwEntries(g);
+  if (b.dataset.gwDraw && await confirmDialog(`Tirer « ${g.title} » maintenant ?`, `${g.participants} participant(s), ${g.total_tickets} tickets. Le giveaway sera clôturé et les gagnants annoncés sur Discord.`, '🎲 Tirer au sort')) {
+    const r = await api('POST', `/api/admin/giveaways/${id}/draw`); toast(r.message, r.ok ? 'success' : 'error'); return loadGiveaways();
+  }
+  if (b.dataset.gwReroll && await confirmDialog('Tirer un gagnant supplémentaire ?', 'Les gagnants actuels restent, un nouveau gagnant est tiré parmi les autres participants et annoncé.', '🔁 Relancer')) {
+    const r = await api('POST', `/api/admin/giveaways/${id}/reroll`); toast(r.message, r.ok ? 'success' : 'error'); return loadGiveaways();
+  }
+  if (b.dataset.gwCancel && await confirmDialog(`Annuler « ${g.title} » ?`, 'Aucun tirage n\'aura lieu. Les points dépensés en tickets sont remboursés.', 'Annuler le giveaway')) {
+    const r = await api('POST', `/api/admin/giveaways/${id}/cancel`); toast(r.message, r.ok ? 'success' : 'error'); return loadGiveaways();
+  }
+});
+
+async function gwEntries(g) {
+  const r = await api('GET', `/api/admin/giveaways/${g.id}/entries`);
+  if (!r.ok) return toast(r.message, 'error');
+  openModal(`<div class="amodal-head"><div class="amodal-title">Participants — ${esc(g.title)}</div>${closeBtn()}</div>
+    <div style="overflow-x:auto"><table class="tbl"><thead><tr><th>Membre</th><th>Tickets</th><th>Détail</th><th>Inscrit le</th></tr></thead><tbody>
+    ${r.entries.map(e => `<tr><td><strong>${esc(e.username)}</strong>${r.winners.some(w => (w.discord_username || w.username) === e.username) ? ' 🏆' : ''}</td><td><strong>${e.tickets.total}</strong></td>
+      <td class="muted">1 base${e.tickets.rank ? ` · +${e.tickets.rank} rang` : ''}${e.tickets.challenges ? ` · +${e.tickets.challenges} défis` : ''}${e.tickets.bought ? ` · +${e.tickets.bought} achetés` : ''}</td>
+      <td class="muted">${fmtDateTime(e.joined_at)}</td></tr>`).join('') || '<tr><td colspan="4" class="empty-td">Aucun participant.</td></tr>'}
+    </tbody></table></div>`, true);
+}
+
+// datetime-local ↔ ISO (heure locale du navigateur de l'admin)
+const toLocalInput = iso => { const d = new Date(iso); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
+
+function giveawayForm(g) {
+  const c = g?.conditions || {};
+  const v = g || { winners_count: 1, ticket_cost: 100, max_bought: 5, bonus_per_challenge: 1, max_challenge_bonus: 10, rank_bonus: true,
+    starts_at: new Date().toISOString(), ends_at: new Date(Date.now() + 7 * 864e5).toISOString() };
+  const chOpts = allChallenges.filter(x => x.active).map(x => `<option value="${x.id}" ${(c.challenges || []).includes(x.id) ? 'selected' : ''}>${esc(PLATFORMS[x.platform] || x.platform)} — ${esc(x.name)}</option>`).join('');
+  openModal(`
+    <div class="amodal-head"><div class="amodal-title">${g ? 'Modifier le giveaway' : 'Nouveau giveaway'}</div>${closeBtn()}</div>
+    <form id="gw-form" class="grid-form">
+      <div class="fg span2"><label class="fl">Titre</label><input class="fi" name="title" value="${esc(v.title || '')}" required maxlength="100" placeholder="Giveaway de la rentrée"/></div>
+      <div class="fg"><label class="fl">Lot à gagner</label><input class="fi" name="prize" value="${esc(v.prize || '')}" required maxlength="120" placeholder="Clavier gaming, 1000 V-Bucks…"/></div>
+      <div class="fg"><label class="fl">Nombre de gagnants</label><input class="fi" type="number" name="winners_count" min="1" max="50" value="${v.winners_count}"/></div>
+      <div class="fg span2"><label class="fl">Description</label><input class="fi" name="description" value="${esc(v.description || '')}" maxlength="400"/></div>
+      <div class="fg span2"><label class="fl">Image (URL, optionnel)</label><input class="fi" name="image_url" type="url" value="${esc(v.image_url || '')}" placeholder="https://…"/></div>
+      <div class="fg"><label class="fl">Début</label><input class="fi" type="datetime-local" name="starts_at" value="${toLocalInput(v.starts_at)}" required/></div>
+      <div class="fg"><label class="fl">Fin (tirage automatique)</label><input class="fi" type="datetime-local" name="ends_at" value="${toLocalInput(v.ends_at)}" required/></div>
+
+      <div class="span2 section-title" style="margin:8px 0 6px">Conditions de participation</div>
+      <div class="fg"><label class="fl">Rang minimum</label><select class="fi" name="min_rank"><option value="">Aucun</option><option value="silver" ${c.min_rank === 'silver' ? 'selected' : ''}>🥈 Silver</option><option value="gold" ${c.min_rank === 'gold' ? 'selected' : ''}>🥇 Gold</option></select></div>
+      <div class="fg"><label class="fl">Points gagnés au total (min.)</label><input class="fi" type="number" min="0" name="min_lifetime_points" value="${c.min_lifetime_points || 0}"/></div>
+      <div class="fg"><label class="fl">Ancienneté du compte (jours)</label><input class="fi" type="number" min="0" name="min_account_days" value="${c.min_account_days || 0}"/><div class="fh">Évite les comptes créés juste pour le giveaway.</div></div>
+      <div class="fg" style="display:flex;flex-direction:column;gap:6px;justify-content:center">
+        <label class="switch"><input type="checkbox" name="discord_member" ${c.discord_member || !g ? 'checked' : ''}/><span>Être sur le Discord</span></label>
+        <label class="switch"><input type="checkbox" name="twitch_linked" ${c.twitch_linked ? 'checked' : ''}/><span>Twitch lié</span></label>
+        <label class="switch"><input type="checkbox" name="twitter_linked" ${c.twitter_linked ? 'checked' : ''}/><span>X lié</span></label>
+      </div>
+      <div class="fg span2"><label class="fl">Défis à avoir validés (Ctrl/Cmd + clic pour plusieurs)</label><select class="fi" name="challenges" multiple size="5">${chOpts}</select></div>
+
+      <div class="span2 section-title" style="margin:8px 0 6px">Tickets bonus (rendre le jeu plus fun)</div>
+      <div class="fg span2"><label class="switch"><input type="checkbox" name="rank_bonus" ${v.rank_bonus ? 'checked' : ''}/><span>Bonus de rang : Silver +1 ticket, Gold +2 tickets</span></label></div>
+      <div class="fg"><label class="fl">Tickets par défi validé pendant le giveaway</label><input class="fi" type="number" min="0" name="bonus_per_challenge" value="${v.bonus_per_challenge}"/></div>
+      <div class="fg"><label class="fl">Maximum de tickets « défis »</label><input class="fi" type="number" min="0" name="max_challenge_bonus" value="${v.max_challenge_bonus}"/><div class="fh">0 = illimité</div></div>
+      <div class="fg"><label class="fl">Prix d'un ticket (points)</label><input class="fi" type="number" min="0" name="ticket_cost" value="${v.ticket_cost}"/><div class="fh">0 = pas de vente de tickets</div></div>
+      <div class="fg"><label class="fl">Tickets achetables par membre (max.)</label><input class="fi" type="number" min="0" name="max_bought" value="${v.max_bought}"/></div>
+      ${g ? '' : `<label class="switch span2" style="margin:4px 0 8px"><input type="checkbox" name="notify"/><span>🔔 Prévenir aussi tous les membres en MP Discord (l'annonce dans le salon giveaway est automatique)</span></label>`}
+      <div class="span2 toolbar" style="margin:6px 0 0;justify-content:flex-end">
+        <button type="button" class="btn-ghost sm" data-close>Annuler</button>
+        <button type="submit" class="btn-primary sm">${g ? 'Enregistrer' : 'Créer le giveaway'}</button>
+      </div>
+    </form>`, true);
+  const f = el('gw-form');
+  f.addEventListener('submit', async e => {
+    e.preventDefault();
+    const num = n => +f[n].value || 0;
+    const body = {
+      title: f.title.value.trim(), prize: f.prize.value.trim(), description: f.description.value.trim(), image_url: f.image_url.value.trim() || null,
+      winners_count: num('winners_count'), starts_at: new Date(f.starts_at.value).toISOString(), ends_at: new Date(f.ends_at.value).toISOString(),
+      rank_bonus: f.rank_bonus.checked, bonus_per_challenge: num('bonus_per_challenge'), max_challenge_bonus: num('max_challenge_bonus'),
+      ticket_cost: num('ticket_cost'), max_bought: num('max_bought'), notify: !!f.notify?.checked,
+      conditions: { min_rank: f.min_rank.value || null, min_lifetime_points: num('min_lifetime_points'), min_account_days: num('min_account_days'),
+        discord_member: f.discord_member.checked, twitch_linked: f.twitch_linked.checked, twitter_linked: f.twitter_linked.checked,
+        challenges: [...f.challenges.selectedOptions].map(o => +o.value) },
+    };
+    const r = g ? await api('PATCH', `/api/admin/giveaways/${g.id}`, body) : await api('POST', '/api/admin/giveaways', body);
+    toast(r.message, r.ok ? 'success' : 'error');
+    if (r.ok) { closeModal(); loadGiveaways(); }
+  });
 }
 
 // ── Boutique ───────────────────────────────────────────────────────────────────

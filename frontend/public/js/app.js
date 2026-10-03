@@ -62,7 +62,8 @@ window.addEventListener('DOMContentLoaded', async () => {
 });
 
 async function loadAll() {
-  const [stats, shopRes] = await Promise.all([api('GET', '/api/user/stats'), api('GET', '/api/user/shop')]);
+  const [stats, shopRes, gwRes] = await Promise.all([api('GET', '/api/user/stats'), api('GET', '/api/user/shop'), api('GET', '/api/user/giveaways')]);
+  if (gwRes.ok) STATE.giveaways = gwRes.giveaways;
   if (stats.status === 401) return location.reload();
   if (stats.ok) {
     Object.assign(STATE, {
@@ -128,6 +129,7 @@ function renderAll() {
   renderCodes();
   renderOrders();
   renderLive();
+  renderGiveaways();
 }
 
 function setAvatar(id, url, letter) {
@@ -308,6 +310,9 @@ document.addEventListener('click', e => {
     case 'redirect':    return withBusy(a, () => startRedirect(c));
     case 'buy':         return buyItem(STATE.shopItems.find(i => i.id === +a.dataset.id));
     case 'copy':        return copyCode(a.dataset.code, a);
+    case 'gw-join':     return withBusy(a, () => joinGiveaway(+a.dataset.id));
+    case 'gw-buy':      return buyGwTickets(+a.dataset.id);
+    case 'gw-replay':   return revealGiveaway(STATE.giveaways.find(g => g.id === +a.dataset.id), true);
     case 'link-twitch': location.href = '/auth/twitch'; return;
     case 'link-twitter': location.href = '/auth/twitter'; return;
     case 'epic-open':   show('epic-form'); el('epic-username').focus(); return;
@@ -526,11 +531,135 @@ window.addEventListener('beforeunload', () => {
   if (watchSessionId) navigator.sendBeacon('/api/user/watchtime/end', new Blob([JSON.stringify({ sessionId: watchSessionId })], { type: 'application/json' }));
 });
 
+// ── Giveaways ──────────────────────────────────────────────────────────────────
+STATE.giveaways = [];
+const GW_STATUS = { upcoming: ['🕒 Bientôt', 'upcoming'], open: ['🟢 En cours', 'open'], drawing: ['🎲 Tirage en cours…', 'drawing'], ended: ['🏁 Terminé', 'ended'] };
+
+function renderGiveaways() {
+  const list = STATE.giveaways || [];
+  const todo = list.filter(g => g.status === 'open' && !g.joined && g.eligible).length;
+  el('gw-badge').textContent = todo;
+  el('gw-badge').classList.toggle('hidden', !todo);
+  el('gw-list').innerHTML = list.map(gwCard).join('') || '<p class="empty-msg">Aucun giveaway pour le moment. Reste connecté, ça arrive bientôt 👀</p>';
+  tickCountdowns();
+  // Révélation animée des résultats non encore vus
+  const unseen = list.find(g => g.status === 'ended' && g.joined && !seenGw().includes(g.id));
+  if (unseen && document.querySelector('#page-giveaways.active')) revealGiveaway(unseen);
+}
+
+function gwCard(g) {
+  const [label, cls] = GW_STATUS[g.status] || ['', ''];
+  const t = g.tickets;
+  const conds = g.conditions.length ? `<ul class="gw-conds">${g.conditions.map(c => `<li class="${c.ok ? 'ok' : 'ko'}">${c.ok ? '✅' : '❌'} ${esc(c.label)}</li>`).join('')}</ul>` : '<p class="muted">Aucune condition, tout le monde peut participer !</p>';
+  let action = '';
+  if (g.status === 'open' && !g.joined) action = g.eligible
+    ? `<button class="btn-primary full" data-action="gw-join" data-id="${g.id}">🎟️ Participer</button>`
+    : `<button class="btn-primary full" disabled>Remplis les conditions pour participer</button>`;
+  if (g.status === 'open' && g.joined) {
+    const left = g.max_bought - t.bought;
+    action = `<div class="gw-mine">
+      <div class="gw-tickets"><span class="gw-tk-num">${t.total}</span> ticket${t.total > 1 ? 's' : ''}<span class="gw-chance">≈ ${g.chance < 1 && g.chance > 0 ? '<1' : Math.round(g.chance)} % de chances</span></div>
+      <div class="gw-breakdown">🎟️ ${t.base} participation${t.rank ? ` · 🏅 +${t.rank} rang` : ''}${t.challenges ? ` · 🎯 +${t.challenges} défis` : ''}${t.bought ? ` · ⭐ +${t.bought} achetés` : ''}</div>
+      ${g.bonus_per_challenge ? `<div class="gw-hint">🎯 +${g.bonus_per_challenge} ticket par défi validé d'ici la fin${g.max_challenge_bonus ? ` (max ${g.max_challenge_bonus}, ${Math.max(0, g.max_challenge_bonus - t.challenges)} restant)` : ''} → <a data-page="challenges" href="#challenges">voir les défis</a></div>` : ''}
+      ${g.ticket_cost && left > 0 ? `<div class="gw-buy"><select class="input" id="gw-qty-${g.id}">${Array.from({ length: Math.min(left, 10) }, (_, i) => `<option value="${i + 1}">${i + 1} ticket${i ? 's' : ''} · ${fmtNum((i + 1) * g.ticket_cost)} pts</option>`).join('')}</select><button class="btn-sm" data-action="gw-buy" data-id="${g.id}">Acheter</button></div>` : ''}
+    </div>`;
+  }
+  if (g.status === 'ended') {
+    action = `<div class="gw-winners">${g.winners.length ? g.winners.map(w => `<span class="gw-winner ${w.user_id === STATE.user.id ? 'me' : ''}">🏆 ${esc(w.discord_username || w.username)}</span>`).join('') : '<span class="muted">Aucun gagnant</span>'}</div>
+      ${g.won ? '<div class="gw-won">🎉 Tu as gagné ! L\'équipe K13 te contacte sur Discord.</div>' : ''}
+      ${g.joined ? `<button class="btn-ghost sm" data-action="gw-replay" data-id="${g.id}">🎬 Revoir le tirage</button>` : ''}`;
+  }
+  const end = g.status === 'upcoming' ? g.starts_at : g.ends_at;
+  return `<article class="gw-card ${cls} ${g.won ? 'won' : ''}">
+    ${g.image_url ? `<div class="gw-img" style="background-image:url('${esc(g.image_url)}')"></div>` : '<div class="gw-img gw-img-ph">🎁</div>'}
+    <div class="gw-body">
+      <div class="gw-top"><span class="gw-status ${cls}">${label}</span>${g.status !== 'ended' ? `<span class="gw-countdown" data-end="${end}">…</span>` : `<span class="muted">${fmtDate(g.ends_at)}</span>`}</div>
+      <h2 class="gw-title">${esc(g.title)}</h2>
+      <div class="gw-prize">🏆 ${esc(g.prize)}${g.winners_count > 1 ? ` · ${g.winners_count} gagnants` : ''}</div>
+      ${g.description ? `<p class="gw-desc">${esc(g.description)}</p>` : ''}
+      <div class="gw-stats"><span>👥 ${g.participants} participant${g.participants > 1 ? 's' : ''}</span><span>🎟️ ${g.total_tickets} tickets en jeu</span></div>
+      ${g.status !== 'ended' ? `<div class="gw-sub">Conditions</div>${conds}` : ''}
+      ${action}
+    </div>
+  </article>`;
+}
+
+function tickCountdowns() {
+  let needReload = false;
+  document.querySelectorAll('.gw-countdown').forEach(n => {
+    const s = Math.floor((new Date(n.dataset.end) - Date.now()) / 1000);
+    if (s <= 0) { n.textContent = 'maintenant'; needReload = true; return; }
+    const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60), sec = s % 60;
+    n.textContent = (n.closest('.upcoming') ? 'Début dans ' : 'Fin dans ') + (d ? `${d}j ${h}h ${m}min` : `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`);
+  });
+  // Le tirage est fait par le serveur dans les 30 s : on recharge un peu après
+  if (needReload && !tickCountdowns.pending) { tickCountdowns.pending = true; setTimeout(async () => { tickCountdowns.pending = false; await loadAll(); }, 35000); }
+}
+setInterval(tickCountdowns, 1000);
+
+async function joinGiveaway(id) {
+  const res = await api('POST', `/api/user/giveaways/${id}/join`);
+  toast(res.message, res.ok ? 'success' : 'error');
+  if (res.ok) loadAll();
+}
+function buyGwTickets(id) {
+  const g = STATE.giveaways.find(x => x.id === id), qty = +el(`gw-qty-${id}`).value;
+  confirmModal('⭐', `Acheter ${qty} ticket${qty > 1 ? 's' : ''} ?`, `${fmtNum(qty * g.ticket_cost)} pts seront débités (il te restera ${fmtNum(STATE.user.points - qty * g.ticket_cost)} pts). Non remboursable, sauf annulation du giveaway.`,
+    'Acheter', async () => {
+      const res = await api('POST', `/api/user/giveaways/${id}/tickets`, { qty });
+      toast(res.message, res.ok ? 'success' : 'error');
+      if (res.ok) loadAll();
+    });
+}
+
+function seenGw() { try { return JSON.parse(localStorage.getItem('k13-gw-seen') || '[]'); } catch { return []; } }
+// Animation de tirage : les pseudos défilent en ralentissant puis s'arrêtent sur le gagnant
+function revealGiveaway(g, replay = false) {
+  if (!g || (revealGiveaway.running && !replay)) return;
+  revealGiveaway.running = true;
+  try { localStorage.setItem('k13-gw-seen', JSON.stringify([...new Set([...seenGw(), g.id])].slice(-100))); } catch {}
+  const winner = g.winners[0];
+  const names = [...new Set([...(g.sample || []), ...g.winners.map(w => w.discord_username || w.username)])];
+  if (!names.length) names.push('…');
+  el('gwr-title').textContent = g.title;
+  el('gwr-desc').textContent = '';
+  el('gwr-name').className = 'gwr-name';
+  hide('gwr-close'); show('gw-reveal');
+  let i = 0, delay = 60;
+  const step = () => {
+    el('gwr-name').textContent = names[i++ % names.length];
+    delay *= 1.12;
+    if (delay < 520) return setTimeout(step, delay);
+    el('gwr-name').textContent = winner ? (winner.discord_username || winner.username) : 'Aucun gagnant';
+    el('gwr-name').classList.add('final');
+    const others = g.winners.slice(1).map(w => w.discord_username || w.username);
+    el('gwr-desc').textContent = g.won ? `🎉 C'est toi ! Tu remportes ${g.prize} !`
+      : winner ? `remporte ${g.prize}${others.length ? ` · aussi gagnants : ${others.join(', ')}` : ''}. Pas cette fois… retente ta chance au prochain !` : '';
+    if (g.won) confetti();
+    show('gwr-close');
+    revealGiveaway.running = false;
+  };
+  step();
+}
+el('gwr-close').addEventListener('click', () => hide('gw-reveal'));
+
+function confetti() {
+  const colors = ['#F59E0B', '#2563EB', '#10B981', '#EF4444', '#A855F7'];
+  for (let i = 0; i < 80; i++) {
+    const c = document.createElement('i');
+    c.className = 'confetti';
+    c.style.cssText = `left:${Math.random() * 100}vw;background:${colors[i % colors.length]};animation-delay:${Math.random() * .6}s;transform:rotate(${Math.random() * 360}deg)`;
+    document.body.appendChild(c);
+    setTimeout(() => c.remove(), 3500);
+  }
+}
+
 // ── Navigation ─────────────────────────────────────────────────────────────────
 function showPage(id, push = true) {
   if (!el('page-' + id)) id = 'dashboard';
   document.querySelectorAll('.page').forEach(p => p.classList.toggle('active', p.id === 'page-' + id));
   document.querySelectorAll('.nav-link[data-page]').forEach(b => b.classList.toggle('active', b.dataset.page === id));
+  if (id === 'giveaways') setTimeout(renderGiveaways, 50);
   if (push && location.hash.slice(1) !== id) history.pushState({}, '', id === 'dashboard' ? location.pathname : '#' + id);
   window.scrollTo({ top: 0 });
 }

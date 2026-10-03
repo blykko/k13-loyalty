@@ -109,6 +109,19 @@ router.post('/epic', (req, res) => {
   res.json({ ok: true, message: 'Infos Epic Games enregistrées.' });
 });
 
+// ── Giveaways ──────────────────────────────────────────────────────────────────
+const giveaways = require('../services/giveaways');
+router.get('/giveaways', async (req, res) => {
+  try { res.json({ ok: true, giveaways: await giveaways.listForUser(req.session.userId) }); }
+  catch (e) { console.error('[giveaways]', e); res.status(500).json({ ok: false, message: 'Erreur serveur.' }); }
+});
+router.post('/giveaways/:id/join', async (req, res) => {
+  res.json(await giveaways.join(parseInt(req.params.id, 10), req.session.userId));
+});
+router.post('/giveaways/:id/tickets', (req, res) => {
+  res.json(giveaways.buyTickets(parseInt(req.params.id, 10), req.session.userId, req.body?.qty));
+});
+
 // ── Préférences ────────────────────────────────────────────────────────────────
 router.post('/settings', (req, res) => {
   if (req.body?.notify_dm !== undefined) dbRun('UPDATE users SET notify_dm=? WHERE id=?', [req.body.notify_dm ? 1 : 0, req.session.userId]);
