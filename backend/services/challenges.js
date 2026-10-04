@@ -15,8 +15,8 @@ const T       = require('./time');
 // boutique ne fait pas redescendre de palier.
 const RANKS = [
   { id: 'bronze', min: 0 },
-  { id: 'silver', min: 1000 },
-  { id: 'gold',   min: 2000 },
+  { id: 'silver', min: 10000 },
+  { id: 'gold',   min: 20000 },
 ];
 function rankFor(lifetime) {
   let r = RANKS[0];

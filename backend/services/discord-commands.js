@@ -4,7 +4,7 @@
  * et jeux : /pileouface /roulette /blackjack (boutons Tirer / Rester / Doubler).
  * Enregistrées sur le serveur DISCORD_GUILD_ID au démarrage du bot.
  */
-const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags } = require('discord.js');
 const { dbGet } = require('../models/db');
 
 const RANK_LABEL = { bronze: '🥉 Bronze', silver: '🥈 Silver', gold: '🥇 Gold' };
@@ -13,6 +13,7 @@ const site = () => require('./notify').siteUrl();
 
 const COMMANDS = [
   new SlashCommandBuilder().setName('daily').setDescription('Récupère ton bonus quotidien et fais grimper ta série 🔥'),
+  new SlashCommandBuilder().setName('cadeau').setDescription('Cadeau du jour : choisis 1 cadeau parmi 3 🎁'),
   new SlashCommandBuilder().setName('points').setDescription('Affiche tes points (ou ceux d\'un membre)')
     .addUserOption(o => o.setName('membre').setDescription('Membre à consulter')),
   new SlashCommandBuilder().setName('classement').setDescription('Top 10 des membres')
@@ -61,8 +62,18 @@ async function handleCommand(i) {
     const r = loyalty.claimDaily(u.id);
     const embed = new EmbedBuilder().setColor(r.ok ? 0xF59E0B : 0x6B7280)
       .setTitle(r.ok ? `🔥 Série de ${r.streak} jour${r.streak > 1 ? 's' : ''} !` : '⏳ Déjà récupéré aujourd\'hui')
-      .setDescription(r.message + (r.badges?.length ? `\n🏅 Nouveau badge : ${r.badges.map(b => `${b.icon} ${b.name}`).join(', ')}` : ''));
+      .setDescription(r.message + (r.badges?.length ? `\n🏅 Nouveau badge : ${r.badges.map(b => `${b.icon} ${b.name}`).join(', ')}` : '')
+        + (loyalty.giftStatus(userOf(i.user.id)).available ? '\n\n🎁 Ton **cadeau du jour** t\'attend : `/cadeau`' : ''));
     return i.reply({ embeds: [embed] });
+  }
+
+  if (name === 'cadeau') {
+    const st = loyalty.giftStatus(u);
+    if (!st.available) return i.reply({ content: `🎁 Déjà ouvert aujourd'hui ! Prochain cadeau <t:${Math.floor(new Date(st.resetsAt) / 1000)}:R>.`, flags: MessageFlags.Ephemeral });
+    return i.reply({ embeds: [new EmbedBuilder().setColor(0xA855F7).setTitle('🎁 Cadeau du jour')
+      .setDescription(`Choisis un cadeau… l'un d'eux peut contenir jusqu'à **${fmt(st.max)} pts** 💎`)],
+      components: [new ActionRowBuilder().addComponents([0, 1, 2].map(n =>
+        new ButtonBuilder().setCustomId(`gift:${i.user.id}:${n}`).setLabel(`Cadeau ${n + 1}`).setEmoji('🎁').setStyle(ButtonStyle.Primary)))] });
   }
 
   if (name === 'points') {
@@ -106,7 +117,7 @@ async function handleCommand(i) {
   if (name === 'parrainage') {
     const r = loyalty.referralInfo(u.id);
     return i.reply({ embeds: [new EmbedBuilder().setColor(0x059669).setTitle('🤝 Ton lien de parrainage')
-      .setDescription(`${r.link}\n\nQuand un ami s'inscrit avec ce lien et valide son premier défi : **+${r.referrerReward} pts** pour toi, **+${r.refereeReward} pts** pour lui.\nFilleuls : ${r.count} (dont ${r.rewarded} actifs)`)],
+      .setDescription(`${r.link}\n\nQuand un ami s'inscrit avec ce lien et valide son premier défi : **+${fmt(r.referrerReward)} pts** pour toi, **+${fmt(r.refereeReward)} pts** pour lui.\n\n**Paliers bonus :**\n${r.milestones.map(m => `${r.rewarded >= m.count ? '✅' : '🎯'} ${m.count} filleuls actifs → +${fmt(m.bonus)} pts`).join('\n')}\n\nFilleuls : ${r.count} (dont ${r.rewarded} actifs)`)],
       flags: MessageFlags.Ephemeral });
   }
 
@@ -129,8 +140,30 @@ async function handleCommand(i) {
   if (name === 'blackjack') return dg.playBlackjack(i, u, i.options.getInteger('mise'));
 }
 
+// Ouverture du cadeau : petite animation puis révélation des 3 cadeaux
+async function handleGift(i) {
+  const [, ownerId, choice] = i.customId.split(':');
+  if (i.user.id !== ownerId) {
+    await i.reply({ content: 'Ce cadeau n\'est pas pour toi 😉 Ouvre le tien avec /cadeau.', flags: MessageFlags.Ephemeral });
+    return true;
+  }
+  const u = userOf(i.user.id);
+  if (!u) { await notLinked(i); return true; }
+  const r = require('./loyalty').openGift(u.id, +choice);
+  if (!r.ok) { await i.update({ components: [] }); await i.followUp({ content: r.message, flags: MessageFlags.Ephemeral }); return true; }
+  await i.update({ embeds: [new EmbedBuilder().setColor(0xA855F7).setTitle('🎁 Cadeau du jour').setDescription(`Tu ouvres le cadeau ${+choice + 1}… ✨`)], components: [] });
+  await new Promise(res => setTimeout(res, 1200));
+  const icon = v => v >= 10000 ? '💎' : v >= 2500 ? '🏆' : v >= 1000 ? '⭐' : '🎁';
+  const boxes = r.values.map((v, n) => n === r.choice ? `**【${icon(v)} ${fmt(v)}】**` : `${icon(v)} ${fmt(v)}`).join('\u2003│\u2003');
+  await i.editReply({ embeds: [new EmbedBuilder().setColor(r.jackpot ? 0xF59E0B : r.won >= 1000 ? 0x059669 : 0x2563EB)
+    .setTitle(r.jackpot ? '💎 JACKPOT !' : `🎁 +${fmt(r.won)} pts !`)
+    .setDescription(`${boxes}\n\n${r.message}\nSolde : **${fmt(r.balance)} pts** · prochain cadeau demain`)] });
+  return true;
+}
+
 async function handle(i) {
   try {
+    if (i.isButton() && i.customId.startsWith('gift:')) return await handleGift(i);
     if (i.isButton()) return await require('./discord-games').handleButton(i, userOf, notLinked);
     if (i.isChatInputCommand()) { await handleCommand(i); return true; }
   } catch (e) {

@@ -134,7 +134,7 @@ function initDb() {
       db.run(`UPDATE users SET lifetime_points = points + COALESCE((
         SELECT SUM(i.cost_points) FROM shop_orders o JOIN shop_items i ON o.item_id=i.id WHERE o.user_id=users.id),0)`);
       // Mêmes seuils que RANKS dans services/challenges.js
-      db.run("UPDATE users SET rank = CASE WHEN lifetime_points>=2000 THEN 'gold' WHEN lifetime_points>=1000 THEN 'silver' ELSE 'bronze' END");
+      db.run("UPDATE users SET rank = CASE WHEN lifetime_points>=2000 THEN 'gold' WHEN lifetime_points>=1000 THEN 'silver' ELSE 'bronze' END"); // seuils avant ×10
     }
 
     // Origine des sessions de visionnage : 'tracker' (bouton) ou 'se' (StreamElements)
@@ -164,7 +164,7 @@ function initDb() {
     // Fidélisation : série quotidienne, parrainage, jeux
     for (const [col, def] of [['streak', 'INTEGER NOT NULL DEFAULT 0'], ['best_streak', 'INTEGER NOT NULL DEFAULT 0'], ['last_daily', 'TEXT'],
       ['ref_code', 'TEXT'], ['referred_by', 'INTEGER'], ['referral_rewarded', 'INTEGER NOT NULL DEFAULT 0'],
-      ['games_disabled', 'INTEGER NOT NULL DEFAULT 0']]) {
+      ['games_disabled', 'INTEGER NOT NULL DEFAULT 0'], ['last_gift', 'TEXT']]) {
       if (!hasCol('users', col)) db.run(`ALTER TABLE users ADD COLUMN ${col} ${def}`);
     }
     db.run('CREATE UNIQUE INDEX IF NOT EXISTS ux_users_ref ON users(ref_code) WHERE ref_code IS NOT NULL');
@@ -190,6 +190,37 @@ function initDb() {
       );
     `);
 
+    // Économie v2 : tous les montants ×10 (une seule fois). Les proportions sont conservées,
+    // personne ne change de rang ; l'historique est aussi converti pour le classement du mois.
+    if (!db.exec("SELECT 1 FROM app_settings WHERE key='economy_v2'")[0]) {
+      const hadData = db.exec('SELECT COUNT(*) FROM users')[0].values[0][0] > 0;
+      if (hadData) {
+        db.run('UPDATE users SET points=points*10, lifetime_points=lifetime_points*10');
+        db.run('UPDATE challenges SET points=points*10');
+        db.run('UPDATE shop_items SET cost_points=cost_points*10');
+        db.run('UPDATE points_log SET delta=delta*10');
+        console.log('[DB] Économie v2 : montants multipliés par 10');
+      }
+      db.run("INSERT INTO app_settings (key,value) VALUES ('economy_v2', datetime('now'))");
+    }
+
+    // Défis de l'ouverture (une seule fois) : met à jour / crée la liste officielle
+    // et désactive les autres (réactivables depuis l'admin, rien n'est supprimé)
+    if (!db.exec("SELECT 1 FROM app_settings WHERE key='launch_v1'")[0]) {
+      const list = require('./launch-challenges');
+      for (const [platform, slug, name, description, points, type, req, rep, url, delay, category] of list) {
+        const exists = db.exec('SELECT id FROM challenges WHERE slug=?', [slug])[0];
+        if (exists) db.run(`UPDATE challenges SET platform=?, name=?, description=?, points=?, type=?, required_value=?, repeat_seconds=?,
+            redirect_url=COALESCE(redirect_url, ?), redirect_delay=?, category=?, active=1 WHERE slug=?`,
+          [platform, name, description, points, type, req, rep, url, delay, category, slug]);
+        else db.run(`INSERT INTO challenges (platform,slug,name,description,points,type,required_value,repeat_seconds,redirect_url,redirect_delay,category,extra)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,'{}')`, [platform, slug, name, description, points, type, req, rep, url, delay, category]);
+      }
+      db.run(`UPDATE challenges SET active=0 WHERE slug NOT IN (${list.map(() => '?').join(',')})`, list.map(c => c[1]));
+      db.run("INSERT INTO app_settings (key,value) VALUES ('launch_v1', datetime('now'))");
+      console.log(`[DB] Défis de lancement appliqués (${list.length} défis)`);
+    }
+
     // Doublons user_challenges (même user / challenge / période) → on garde la ligne validée la plus ancienne
     db.run(`DELETE FROM user_challenges WHERE id IN (
       SELECT a.id FROM user_challenges a JOIN user_challenges b
@@ -210,38 +241,17 @@ function initDb() {
     persist();
 
     // Challenges par défaut
-    const defaults = [
-      // Daily
-      ['discord','discord-msg-daily',   '20 messages Discord (quotidien)',  'Envoie 20 messages sur le serveur Discord K13 aujourd\'hui.',   50, 'messages', 20,   86400, null, 0, 'daily'],
-      ['discord','discord-vocal-daily', '1h en vocal Discord (quotidien)',  'Passe 1h en vocal sur le Discord K13 aujourd\'hui.',           80, 'vocal',    3600, 86400, null, 0, 'daily'],
-      ['twitch', 'twitch-watch-daily',  '30min de stream (quotidien)',      'Regarde 30min de live K13 aujourd\'hui.',                      40, 'watchtime',1800, 86400, null, 0, 'daily'],
-      // Weekly
-      ['discord','discord-msg-weekly',  '100 messages Discord (hebdo)',     'Envoie 100 messages sur le Discord K13 cette semaine.',       120, 'messages', 100, 604800, null, 0, 'weekly'],
-      ['twitch', 'twitch-watch-weekly', '5h de stream (hebdo)',             'Regarde 5h de live K13 cette semaine.',                       150, 'watchtime',18000,604800,null, 0, 'weekly'],
-      // Permanent
-      ['discord','discord-join',        'Rejoindre le Discord K13',         'Rejoins le serveur Discord officiel K13.',                    100, 'join',     0,    0,     null, 0, 'permanent'],
-      ['twitch', 'twitch-follow',       'Follow Twitch K13',                'Suis la chaîne Twitch K13 (vérification automatique).',         50, 'follow',   0,    0,     'https://twitch.tv/k13esport', 0, 'permanent'],
-      ['twitch', 'twitch-sub',          'Sub Twitch K13',                   'Abonne-toi à K13 sur Twitch (sub ou prime). Envoie un screen.',200,'screen',   0,    0,     'https://twitch.tv/k13esport', 0, 'permanent'],
-      ['twitch', 'twitch-watch-1h',     '1h de visionnage (cumulé)',        'Atteins 1h cumulée de stream K13 en live.',                    60, 'watchtime',3600, 0,     null, 0, 'permanent'],
-      ['twitch', 'twitch-watch-5h',     '5h de visionnage (cumulé)',        'Atteins 5h cumulées de stream K13 en live.',                  150, 'watchtime',18000,0,     null, 0, 'permanent'],
-      ['twitch', 'twitch-watch-20h',    '20h de visionnage (cumulé)',       'Atteins 20h cumulées de stream K13 en live.',                 400, 'watchtime',72000,0,     null, 0, 'permanent'],
-      ['twitter','twitter-follow',      'Follow K13 sur X (Twitter)',       'Suis @K13Esport. Envoie un screen après 20 secondes.',         30, 'redirect', 0,    0,     'https://twitter.com/K13Esport', 20, 'permanent'],
-      ['tiktok', 'tiktok-follow',       'Follow K13 sur TikTok',           'Suis K13 sur TikTok. Envoie un screen après le timer.',         30, 'redirect', 0,    0,     'https://www.tiktok.com/@k13esport', 20, 'permanent'],
-      ['instagram','insta-follow',      'Follow K13 sur Instagram',         'Suis K13 sur Instagram. Envoie un screen après le timer.',      30, 'redirect', 0,    0,     'https://www.instagram.com/k13esport1', 20, 'permanent'],
-            ['discord','discord-invite',      'Inviter quelqu\'un sur le Discord','Invite une personne sur le serveur Discord K13.',             100,'invite',    0,    0,     null, 0, 'permanent'],
-      ['epic',   'epic-creator',        'Code créateur Epic Games',         'Utilise le code créateur K13 dans Epic. Envoie un screen.',   150, 'screen',   0,    0,     null, 0, 'permanent'],
-      ['discord','discord-invite-daily', 'Inviter 2 amis sur Discord (quotidien)','Invite 2 amis qui rejoignent le serveur K13 aujourd\'hui.',  100, 'invite',   2,    86400, null, 0, 'daily'],
-    ];
+    const defaults = require('./launch-challenges');
     const ins = db.prepare(`INSERT OR IGNORE INTO challenges (platform,slug,name,description,points,type,required_value,repeat_seconds,redirect_url,redirect_delay,category,extra) VALUES (?,?,?,?,?,?,?,?,?,?,?,'{}') `);
     for (const r of defaults) ins.run(r);
 
     // Boutique (uniquement à la première initialisation)
     if (!db.exec('SELECT COUNT(*) FROM shop_items')[0].values[0][0]) [
-      ['Code promo -5%',  'Code de réduction 5% sur la boutique K13. Valable 30 jours.',  'promo_code',  500, -1, '{"discount":5,"tier":"bronze"}'],
-      ['Code promo -10%', 'Code de réduction 10% sur la boutique K13. Valable 30 jours.', 'promo_code', 1000, -1, '{"discount":10,"tier":"silver"}'],
-      ['Code promo -20%', 'Code de réduction 20% sur la boutique K13. Valable 30 jours.', 'promo_code', 2000, -1, '{"discount":20,"tier":"gold"}'],
-      ['Rôle Fan Discord','Rôle "Fan K13" sur le serveur Discord.',                        'discord_role', 300,-1, '{}'],
-      ['Rôle VIP Discord','Rôle "VIP K13" exclusif + avantages.',                          'discord_role',1500,-1, '{}'],
+      ['Code promo -5%',  'Code de réduction 5% sur la boutique K13. Valable 30 jours.',  'promo_code',  5000, -1, '{"discount":5,"tier":"bronze"}'],
+      ['Code promo -10%', 'Code de réduction 10% sur la boutique K13. Valable 30 jours.', 'promo_code', 10000, -1, '{"discount":10,"tier":"silver"}'],
+      ['Code promo -20%', 'Code de réduction 20% sur la boutique K13. Valable 30 jours.', 'promo_code', 20000, -1, '{"discount":20,"tier":"gold"}'],
+      ['Rôle Fan Discord','Rôle "Fan K13" sur le serveur Discord.',                        'discord_role', 3000,-1, '{}'],
+      ['Rôle VIP Discord','Rôle "VIP K13" exclusif + avantages.',                          'discord_role',15000,-1, '{}'],
     ].forEach(r => db.prepare('INSERT OR IGNORE INTO shop_items (name,description,type,cost_points,stock,extra) VALUES (?,?,?,?,?,?)').run(r));
 
     // Admin

@@ -276,7 +276,7 @@ el('challenges-tbl').addEventListener('click', async e => {
 });
 
 function challengeForm(c) {
-  const v = c || { platform: 'discord', type: 'redirect', category: 'permanent', points: 50, required_value: 0, repeat_seconds: 0, redirect_delay: 20, active: 1 };
+  const v = c || { platform: 'discord', type: 'redirect', category: 'permanent', points: 500, required_value: 0, repeat_seconds: 0, redirect_delay: 20, active: 1 };
   const opts = (map, cur) => Object.entries(map).map(([k, l]) => `<option value="${k}" ${k === cur ? 'selected' : ''}>${l}</option>`).join('');
   openModal(`
     <div class="amodal-head"><div class="amodal-title">${c ? 'Modifier le challenge' : 'Nouveau challenge'}</div>${closeBtn()}</div>
@@ -389,7 +389,7 @@ el('orders-tbl').addEventListener('click', async e => {
 
 function itemForm(item) {
   let extra = {}; try { extra = JSON.parse(item?.extra || '{}'); } catch {}
-  const v = item || { type: 'promo_code', cost_points: 500, stock: -1 };
+  const v = item || { type: 'promo_code', cost_points: 5000, stock: -1 };
   openModal(`
     <div class="amodal-head"><div class="amodal-title">${item ? 'Modifier l\'article' : 'Nouvel article'}</div>${closeBtn()}</div>
     <form id="item-form" class="grid-form">

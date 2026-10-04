@@ -69,7 +69,7 @@ async function loadAll() {
       user: stats.user, challenges: stats.challenges, codes: stats.codes, orders: stats.orders,
       progression: stats.progression, activity: stats.activity || {}, seConfigured: !!stats.seConfigured,
       twitterConfigured: !!stats.twitterConfigured,
-      daily: stats.daily, onboarding: stats.onboarding, month: stats.month, gamesDisabled: !!stats.gamesDisabled,
+      daily: stats.daily, gift: stats.gift, onboarding: stats.onboarding, month: stats.month, gamesDisabled: !!stats.gamesDisabled,
     });
   } else toast(stats.message || 'Erreur de chargement.', 'error');
   if (shopRes.ok) STATE.shopItems = shopRes.items;
@@ -100,7 +100,7 @@ function renderAll() {
   // Progression vers le rang suivant (basée sur les points cumulés)
   const nr = u.nextRank;
   if (nr) {
-    const prevMin = { silver: 0, gold: 1000 }[nr.id] ?? 0;
+    const prevMin = { silver: 0, gold: 10000 }[nr.id] ?? 0;
     const pct = Math.max(0, Math.min(100, Math.round((u.lifetime_points - prevMin) / (nr.min - prevMin) * 100)));
     el('hero-next-lbl').textContent = `Prochain rang : ${RANKS[nr.id]}`;
     el('hero-next-val').textContent = `encore ${fmtNum(nr.remaining)} pts`;
@@ -130,6 +130,7 @@ function renderAll() {
   renderOrders();
   renderLive();
   renderDaily();
+  renderGift();
   renderOnboarding();
   el('games-pts').textContent = fmtNum(u.points) + ' pts';
 }
@@ -313,6 +314,7 @@ document.addEventListener('click', e => {
     case 'redirect':    return withBusy(a, () => startRedirect(c));
     case 'buy':         return buyItem(STATE.shopItems.find(i => i.id === +a.dataset.id));
     case 'copy':        return copyCode(a.dataset.code, a);
+    case 'gift':        return openGift(+a.dataset.choice);
     case 'copy-ref':    return copyCode(el('ref-link').value, a);
     case 'bet-chip':    return setBet(a.dataset.game, a.dataset.value);
     case 'coin':        return withBusy(a, () => playCoin(a.dataset.choice));
@@ -564,6 +566,39 @@ el('btn-daily').addEventListener('click', async () => {
   await loadAll();
 });
 
+// ── Cadeau du jour ─────────────────────────────────────────────────────────────
+let giftOpening = false;
+function renderGift() {
+  const g = STATE.gift; if (!g || giftOpening) return;
+  el('gift-card').classList.toggle('opened', !g.available);
+  el('gift-sub').textContent = g.available ? `Choisis 1 cadeau parmi 3 · jusqu'à ${fmtNum(g.max)} pts 💎` : `Déjà ouvert · prochain dans ${fmtUntil(g.resetsAt)}`;
+  if (!g.available && !el('gift-boxes').dataset.revealed) {
+    document.querySelectorAll('.gift-box').forEach(b => { b.disabled = true; b.textContent = '🎁'; });
+  }
+}
+async function openGift(choice) {
+  if (giftOpening) return;
+  giftOpening = true;
+  const boxes = [...document.querySelectorAll('.gift-box')];
+  boxes.forEach(b => { b.disabled = true; });
+  boxes[choice].classList.add('shake');
+  const [r] = await Promise.all([api('POST', '/api/user/gift', { choice }), sleep(1100)]);
+  boxes[choice].classList.remove('shake');
+  if (!r.ok) { giftOpening = false; toast(r.message, 'info'); return loadAll(); }
+  const icon = v => v >= 10000 ? '💎' : v >= 2500 ? '🏆' : v >= 1000 ? '⭐' : '🎁';
+  boxes.forEach((b, n) => {
+    b.innerHTML = `<span class="gb-ico">${icon(r.values[n])}</span><span class="gb-val">${fmtNum(r.values[n])}</span>`;
+    b.classList.add(n === r.choice ? 'picked' : 'missed');
+  });
+  el('gift-boxes').dataset.revealed = '1';
+  toast(r.message, 'success');
+  if (r.won >= 2500) confetti();
+  updateBalance(r.balance);
+  giftOpening = false;
+  STATE.gift = { ...STATE.gift, available: false };
+  el('gift-sub').textContent = 'À demain pour un nouveau cadeau !';
+}
+
 function renderOnboarding() {
   const o = STATE.onboarding; if (!o) return;
   let dismissed = false; try { dismissed = localStorage.getItem('k13-onboard-done') === '1'; } catch {}
@@ -584,8 +619,9 @@ async function loadProfile() {
   if (!r.ok) return;
   const ref = r.referral;
   el('ref-link').value = ref.link;
-  el('ref-desc').textContent = `Partage ton lien : quand un ami s'inscrit et valide son premier défi, tu gagnes +${ref.referrerReward} pts et lui +${ref.refereeReward} pts.`;
-  el('ref-count').textContent = `${ref.count} filleul${ref.count > 1 ? 's' : ''} · ${ref.rewarded} actif${ref.rewarded > 1 ? 's' : ''}`;
+  el('ref-desc').innerHTML = `Partage ton lien : quand un ami s'inscrit et valide son premier défi, tu gagnes <strong>+${fmtNum(ref.referrerReward)} pts</strong> et lui <strong>+${fmtNum(ref.refereeReward)} pts</strong>.`;
+  el('ref-count').innerHTML = `${ref.count} filleul${ref.count > 1 ? 's' : ''} · ${ref.rewarded} actif${ref.rewarded > 1 ? 's' : ''}
+    <div class="ref-steps">${ref.milestones.map(m => `<span class="ref-step ${ref.rewarded >= m.count ? 'on' : ''}">${ref.rewarded >= m.count ? '✅' : '🎯'} ${m.count} actifs : +${fmtNum(m.bonus)}</span>`).join('')}</div>`;
   el('rank-pos').innerHTML = `
     <div><span class="rp-num">${r.month ? '#' + r.month.position : '–'}</span><span class="rp-lbl">Ce mois${r.month ? ` · ${fmtNum(r.month.points)} pts` : ''}</span></div>
     <div><span class="rp-num">${r.all ? '#' + r.all.position : '–'}</span><span class="rp-lbl">Depuis toujours${r.all ? ` · ${fmtNum(r.all.points)} pts` : ''}</span></div>`;
@@ -593,7 +629,7 @@ async function loadProfile() {
   el('badge-count').textContent = `${have}/${r.badges.length}`;
   el('badges-grid').innerHTML = r.badges.map(b => `<div class="badge ${b.unlocked ? 'on' : ''}" title="${esc(b.desc)}">
     <div class="badge-ico">${b.unlocked ? b.icon : '🔒'}</div><div class="badge-name">${esc(b.name)}</div><div class="badge-desc">${esc(b.desc)}</div></div>`).join('');
-  const reasonIco = { challenge: '🎯', daily: '🔥', referral: '🤝', welcome: '👋', shop: '🛒', game: '🎲', admin: '🛠️', revoke: '↩️' };
+  const reasonIco = { gift: '🎁', challenge: '🎯', daily: '🔥', referral: '🤝', welcome: '👋', shop: '🛒', game: '🎲', admin: '🛠️', revoke: '↩️' };
   el('history-body').innerHTML = r.history.map(h => `<tr>
     <td>${reasonIco[h.reason] || '•'} ${esc(h.label || h.reason)}</td>
     <td class="${h.delta > 0 ? 'pos' : 'neg'}" style="text-align:right;font-weight:700">${h.delta > 0 ? '+' : ''}${fmtNum(h.delta)}</td>
@@ -617,7 +653,7 @@ function deleteAccount() {
 
 // ── Jeux ───────────────────────────────────────────────────────────────────────
 let GAMES = { limits: null };
-const CHIPS = [10, 50, 100, 250, 500];
+const CHIPS = [100, 500, 1000, 5000];
 function renderBetRows() {
   document.querySelectorAll('.bet-row').forEach(row => {
     const g = row.dataset.game;
@@ -631,7 +667,7 @@ function renderBetRows() {
     el(`bet-${g}`).addEventListener('change', e => { try { localStorage.setItem('k13-bet-' + g, e.target.value); } catch {} });
   });
 }
-function getBetPref(g) { try { return +localStorage.getItem('k13-bet-' + g) || 50; } catch { return 50; } }
+function getBetPref(g) { try { return +localStorage.getItem('k13-bet-' + g) || 500; } catch { return 500; } }
 function setBet(g, v) {
   const cur = betOf(g);
   v = v === 'all' ? (STATE.user?.points || 0) : v === 'half' ? Math.max(1, Math.floor(cur / 2)) : v === 'double' ? cur * 2 : v;
