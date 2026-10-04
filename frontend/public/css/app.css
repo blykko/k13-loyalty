@@ -383,3 +383,5 @@ button.nav-avatar{border:none;padding:0}
 @keyframes deal{from{transform:translateY(-20px) rotate(-8deg);opacity:0}to{transform:none;opacity:1}}
 .games-legal{font-size:11.5px;color:var(--t3);margin-top:14px;line-height:1.5}
 @media(max-width:760px){.games-grid,.profile-grid,.loyal-row:has(.onboard-card:not(.hidden)){grid-template-columns:1fr}.daily-card{flex-wrap:wrap}.btn-daily{width:100%}}
+
+.chip.allin{border-color:#F97316;color:#F97316}

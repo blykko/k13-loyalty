@@ -336,6 +336,13 @@ router.post('/reset-all', (req, res) => {
   res.json({ ok: true, message: `Défis de tous les membres réinitialisés${req.body.resetPoints ? ' (points remis à 0)' : ''}.` });
 });
 
+// ── Réglages des jeux ──────────────────────────────────────────────────────────
+router.get('/settings/games', (req, res) => res.json({ ok: true, ...require('../services/games').config() }));
+router.post('/settings/games', (req, res) => {
+  const c = require('../services/games').setConfig(req.body || {});
+  res.json({ ok: true, ...c, message: `Jeux : mise ${c.minBet}-${c.maxBet} pts, ${c.daily ? c.daily + ' parties/jour' : 'parties illimitées'}.` });
+});
+
 // ── Mot de passe admin ─────────────────────────────────────────────────────────
 router.post('/change-password', async (req, res) => {
   const pwd = String(req.body?.newPassword || '');
