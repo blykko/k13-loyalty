@@ -117,7 +117,7 @@ async function handleCommand(i) {
   if (name === 'parrainage') {
     const r = loyalty.referralInfo(u.id);
     return i.reply({ embeds: [new EmbedBuilder().setColor(0x059669).setTitle('🤝 Ton lien de parrainage')
-      .setDescription(`${r.link}\n\nQuand un ami s'inscrit avec ce lien et valide son premier défi : **+${r.referrerReward} pts** pour toi, **+${r.refereeReward} pts** pour lui.\nFilleuls : ${r.count} (dont ${r.rewarded} actifs)`)],
+      .setDescription(`${r.link}\n\nQuand un ami s'inscrit avec ce lien et valide son premier défi : **+${fmt(r.referrerReward)} pts** pour toi, **+${fmt(r.refereeReward)} pts** pour lui.\n\n**Paliers bonus :**\n${r.milestones.map(m => `${r.rewarded >= m.count ? '✅' : '🎯'} ${m.count} filleuls actifs → +${fmt(m.bonus)} pts`).join('\n')}\n\nFilleuls : ${r.count} (dont ${r.rewarded} actifs)`)],
       flags: MessageFlags.Ephemeral });
   }
 

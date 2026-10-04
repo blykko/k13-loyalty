@@ -89,7 +89,9 @@ function openGift(userId, choice) {
 }
 
 // ── Parrainage ─────────────────────────────────────────────────────────────────
-const REFERRER_REWARD = 1000, REFEREE_REWARD = 500, MAX_REFERRALS = 50;
+const REFERRER_REWARD = 5000, REFEREE_REWARD = 2500, MAX_REFERRALS = 50;
+// Paliers bonus pour le parrain (nombre de filleuls actifs → bonus)
+const REFERRAL_MILESTONES = { 3: 5000, 5: 10000, 10: 25000, 25: 75000 };
 // Compte Discord récent = probable multicompte : pas de récompense de parrainage
 const MIN_DISCORD_AGE_DAYS = 14;
 
@@ -128,11 +130,13 @@ function rewardReferral(userId) {
   const name = u.discord_username || u.username;
   addPoints(u.referred_by, REFERRER_REWARD, 'referral', `Parrainage : ${name}`);
   addPoints(userId, REFEREE_REWARD, 'referral', 'Bonus filleul');
+  const milestone = REFERRAL_MILESTONES[count] || 0;
+  if (milestone) addPoints(u.referred_by, milestone, 'referral', `Palier parrainage : ${count} filleuls actifs`);
   afterEvent(u.referred_by, 'referral');
   try {
     const { EmbedBuilder } = require('discord.js');
     require('./notify').dmUser(u.referred_by, new EmbedBuilder().setColor(0x059669)
-      .setTitle('🤝 Parrainage validé !').setDescription(`**${name}** a validé son premier défi : **+${REFERRER_REWARD} pts** pour toi !`));
+      .setTitle('🤝 Parrainage validé !').setDescription(`**${name}** a validé son premier défi : **+${(REFERRER_REWARD + milestone).toLocaleString('fr-FR')} pts** pour toi !${milestone ? `\n🎉 Palier de ${count} filleuls atteint !` : ''}`));
   } catch {}
 }
 
@@ -144,6 +148,7 @@ function referralInfo(userId) {
     count: dbGet('SELECT COUNT(*) AS c FROM users WHERE referred_by=?', [userId]).c,
     rewarded: dbGet('SELECT COUNT(*) AS c FROM users WHERE referred_by=? AND referral_rewarded=1', [userId]).c,
     referrerReward: REFERRER_REWARD, refereeReward: REFEREE_REWARD,
+    milestones: Object.entries(REFERRAL_MILESTONES).map(([n, bonus]) => ({ count: +n, bonus })),
   };
 }
 

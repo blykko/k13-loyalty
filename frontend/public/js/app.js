@@ -619,8 +619,9 @@ async function loadProfile() {
   if (!r.ok) return;
   const ref = r.referral;
   el('ref-link').value = ref.link;
-  el('ref-desc').textContent = `Partage ton lien : quand un ami s'inscrit et valide son premier défi, tu gagnes +${ref.referrerReward} pts et lui +${ref.refereeReward} pts.`;
-  el('ref-count').textContent = `${ref.count} filleul${ref.count > 1 ? 's' : ''} · ${ref.rewarded} actif${ref.rewarded > 1 ? 's' : ''}`;
+  el('ref-desc').innerHTML = `Partage ton lien : quand un ami s'inscrit et valide son premier défi, tu gagnes <strong>+${fmtNum(ref.referrerReward)} pts</strong> et lui <strong>+${fmtNum(ref.refereeReward)} pts</strong>.`;
+  el('ref-count').innerHTML = `${ref.count} filleul${ref.count > 1 ? 's' : ''} · ${ref.rewarded} actif${ref.rewarded > 1 ? 's' : ''}
+    <div class="ref-steps">${ref.milestones.map(m => `<span class="ref-step ${ref.rewarded >= m.count ? 'on' : ''}">${ref.rewarded >= m.count ? '✅' : '🎯'} ${m.count} actifs : +${fmtNum(m.bonus)}</span>`).join('')}</div>`;
   el('rank-pos').innerHTML = `
     <div><span class="rp-num">${r.month ? '#' + r.month.position : '–'}</span><span class="rp-lbl">Ce mois${r.month ? ` · ${fmtNum(r.month.points)} pts` : ''}</span></div>
     <div><span class="rp-num">${r.all ? '#' + r.all.position : '–'}</span><span class="rp-lbl">Depuis toujours${r.all ? ` · ${fmtNum(r.all.points)} pts` : ''}</span></div>`;

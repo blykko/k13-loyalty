@@ -204,6 +204,23 @@ function initDb() {
       db.run("INSERT INTO app_settings (key,value) VALUES ('economy_v2', datetime('now'))");
     }
 
+    // Défis de l'ouverture (une seule fois) : met à jour / crée la liste officielle
+    // et désactive les autres (réactivables depuis l'admin, rien n'est supprimé)
+    if (!db.exec("SELECT 1 FROM app_settings WHERE key='launch_v1'")[0]) {
+      const list = require('./launch-challenges');
+      for (const [platform, slug, name, description, points, type, req, rep, url, delay, category] of list) {
+        const exists = db.exec('SELECT id FROM challenges WHERE slug=?', [slug])[0];
+        if (exists) db.run(`UPDATE challenges SET platform=?, name=?, description=?, points=?, type=?, required_value=?, repeat_seconds=?,
+            redirect_url=COALESCE(redirect_url, ?), redirect_delay=?, category=?, active=1 WHERE slug=?`,
+          [platform, name, description, points, type, req, rep, url, delay, category, slug]);
+        else db.run(`INSERT INTO challenges (platform,slug,name,description,points,type,required_value,repeat_seconds,redirect_url,redirect_delay,category,extra)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,'{}')`, [platform, slug, name, description, points, type, req, rep, url, delay, category]);
+      }
+      db.run(`UPDATE challenges SET active=0 WHERE slug NOT IN (${list.map(() => '?').join(',')})`, list.map(c => c[1]));
+      db.run("INSERT INTO app_settings (key,value) VALUES ('launch_v1', datetime('now'))");
+      console.log(`[DB] Défis de lancement appliqués (${list.length} défis)`);
+    }
+
     // Doublons user_challenges (même user / challenge / période) → on garde la ligne validée la plus ancienne
     db.run(`DELETE FROM user_challenges WHERE id IN (
       SELECT a.id FROM user_challenges a JOIN user_challenges b
@@ -224,28 +241,7 @@ function initDb() {
     persist();
 
     // Challenges par défaut
-    const defaults = [
-      // Daily
-      ['discord','discord-msg-daily',   '20 messages Discord (quotidien)',  'Envoie 20 messages sur le serveur Discord K13 aujourd\'hui.',   500, 'messages', 20,   86400, null, 0, 'daily'],
-      ['discord','discord-vocal-daily', '1h en vocal Discord (quotidien)',  'Passe 1h en vocal sur le Discord K13 aujourd\'hui.',           800, 'vocal',    3600, 86400, null, 0, 'daily'],
-      ['twitch', 'twitch-watch-daily',  '30min de stream (quotidien)',      'Regarde 30min de live K13 aujourd\'hui.',                      400, 'watchtime',1800, 86400, null, 0, 'daily'],
-      // Weekly
-      ['discord','discord-msg-weekly',  '100 messages Discord (hebdo)',     'Envoie 100 messages sur le Discord K13 cette semaine.',       1200, 'messages', 100, 604800, null, 0, 'weekly'],
-      ['twitch', 'twitch-watch-weekly', '5h de stream (hebdo)',             'Regarde 5h de live K13 cette semaine.',                       1500, 'watchtime',18000,604800,null, 0, 'weekly'],
-      // Permanent
-      ['discord','discord-join',        'Rejoindre le Discord K13',         'Rejoins le serveur Discord officiel K13.',                    1000, 'join',     0,    0,     null, 0, 'permanent'],
-      ['twitch', 'twitch-follow',       'Follow Twitch K13',                'Suis la chaîne Twitch K13 (vérification automatique).',         500, 'follow',   0,    0,     'https://twitch.tv/k13esport', 0, 'permanent'],
-      ['twitch', 'twitch-sub',          'Sub Twitch K13',                   'Abonne-toi à K13 sur Twitch (sub ou prime). Envoie un screen.',2000,'screen',   0,    0,     'https://twitch.tv/k13esport', 0, 'permanent'],
-      ['twitch', 'twitch-watch-1h',     '1h de visionnage (cumulé)',        'Atteins 1h cumulée de stream K13 en live.',                    600, 'watchtime',3600, 0,     null, 0, 'permanent'],
-      ['twitch', 'twitch-watch-5h',     '5h de visionnage (cumulé)',        'Atteins 5h cumulées de stream K13 en live.',                  1500, 'watchtime',18000,0,     null, 0, 'permanent'],
-      ['twitch', 'twitch-watch-20h',    '20h de visionnage (cumulé)',       'Atteins 20h cumulées de stream K13 en live.',                 4000, 'watchtime',72000,0,     null, 0, 'permanent'],
-      ['twitter','twitter-follow',      'Follow K13 sur X (Twitter)',       'Suis @K13Esport. Envoie un screen après 20 secondes.',         300, 'redirect', 0,    0,     'https://twitter.com/K13Esport', 20, 'permanent'],
-      ['tiktok', 'tiktok-follow',       'Follow K13 sur TikTok',           'Suis K13 sur TikTok. Envoie un screen après le timer.',         300, 'redirect', 0,    0,     'https://www.tiktok.com/@k13esport', 20, 'permanent'],
-      ['instagram','insta-follow',      'Follow K13 sur Instagram',         'Suis K13 sur Instagram. Envoie un screen après le timer.',      300, 'redirect', 0,    0,     'https://www.instagram.com/k13esport1', 20, 'permanent'],
-            ['discord','discord-invite',      'Inviter quelqu\'un sur le Discord','Invite une personne sur le serveur Discord K13.',             1000,'invite',    0,    0,     null, 0, 'permanent'],
-      ['epic',   'epic-creator',        'Code créateur Epic Games',         'Utilise le code créateur K13 dans Epic. Envoie un screen.',   1500, 'screen',   0,    0,     null, 0, 'permanent'],
-      ['discord','discord-invite-daily', 'Inviter 2 amis sur Discord (quotidien)','Invite 2 amis qui rejoignent le serveur K13 aujourd\'hui.',  1000, 'invite',   2,    86400, null, 0, 'daily'],
-    ];
+    const defaults = require('./launch-challenges');
     const ins = db.prepare(`INSERT OR IGNORE INTO challenges (platform,slug,name,description,points,type,required_value,repeat_seconds,redirect_url,redirect_delay,category,extra) VALUES (?,?,?,?,?,?,?,?,?,?,?,'{}') `);
     for (const r of defaults) ins.run(r);
 
