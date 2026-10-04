@@ -11,9 +11,9 @@ const T = require('./time');
 const { addPoints, logPoints } = require('./challenges');
 
 // ── Série quotidienne ──────────────────────────────────────────────────────────
-// Récompense : 10 pts le 1er jour, +5 par jour consécutif (max 50), + paliers bonus
-const STREAK_MILESTONES = { 7: 100, 14: 200, 30: 500, 60: 800, 100: 1500 };
-const dailyReward = streak => 10 + 5 * Math.min(streak - 1, 8);
+// Récompense : 150 pts le 1er jour, +50 par jour consécutif (max 750 dès le 13e jour), + paliers bonus
+const STREAK_MILESTONES = { 7: 750, 14: 1500, 30: 3000, 60: 6000, 100: 15000 };
+const dailyReward = streak => 150 + 50 * Math.min(streak - 1, 12);
 
 function shiftDay(dateStr, days) {
   const [y, m, d] = dateStr.split('-').map(Number);
@@ -60,8 +60,36 @@ function claimDaily(userId) {
     message: `+${reward + bonus} pts ! Série : ${streak} jour${streak > 1 ? 's' : ''} 🔥${bonus ? ` (palier +${bonus} pts 🎉)` : ''}${lost ? ` — ta série de ${lost} jours était perdue, c'est reparti !` : ''}` };
 }
 
+// ── Cadeau du jour : choisir 1 cadeau parmi 3 ──────────────────────────────────
+// Tirage pondéré [points, poids] — moyenne ≈ 700 pts, 2 % de chances de jackpot
+const GIFT_TABLE = [[150, 30], [300, 30], [500, 20], [1000, 12], [2500, 6], [10000, 2]];
+function rollGift() {
+  const total = GIFT_TABLE.reduce((s, [, w]) => s + w, 0);
+  let r = crypto.randomInt(total);
+  for (const [pts, w] of GIFT_TABLE) if ((r -= w) < 0) return pts;
+  return GIFT_TABLE[0][0];
+}
+function giftStatus(user) {
+  return { available: user.last_gift !== T.parisDate(), resetsAt: T.periodStart(T.DAY, new Date(Date.now() + 86400000)).toISOString(),
+    max: GIFT_TABLE[GIFT_TABLE.length - 1][0] };
+}
+function openGift(userId, choice) {
+  choice = parseInt(choice, 10);
+  if (![0, 1, 2].includes(choice)) return { ok: false, message: 'Choisis un des 3 cadeaux.' };
+  const today = T.parisDate();
+  const r = dbRun("UPDATE users SET last_gift=? WHERE id=? AND IFNULL(last_gift,'')!=?", [today, userId, today]);
+  if (!r.changes) return { ok: false, already: true, message: 'Tu as déjà ouvert ton cadeau aujourd\'hui, reviens demain 🎁' };
+  const values = [rollGift(), rollGift(), rollGift()];
+  const won = values[choice];
+  addPoints(userId, won, 'gift', 'Cadeau du jour');
+  const best = Math.max(...values);
+  return { ok: true, values, choice, won, jackpot: won === GIFT_TABLE[GIFT_TABLE.length - 1][0],
+    balance: dbGet('SELECT points FROM users WHERE id=?', [userId]).points,
+    message: `🎁 +${won.toLocaleString('fr-FR')} pts !${won < best ? ` (le meilleur cadeau valait ${best.toLocaleString('fr-FR')} pts…)` : won >= 2500 ? ' 🎉' : ''}` };
+}
+
 // ── Parrainage ─────────────────────────────────────────────────────────────────
-const REFERRER_REWARD = 100, REFEREE_REWARD = 50, MAX_REFERRALS = 50;
+const REFERRER_REWARD = 1000, REFEREE_REWARD = 500, MAX_REFERRALS = 50;
 // Compte Discord récent = probable multicompte : pas de récompense de parrainage
 const MIN_DISCORD_AGE_DAYS = 14;
 
@@ -81,7 +109,7 @@ function ensureRefCode(userId) {
 }
 
 // À l'inscription : rattache le filleul à son parrain + bonus de bienvenue
-const WELCOME_BONUS = 50;
+const WELCOME_BONUS = 500;
 function onSignup(userId, refCode) {
   addPoints(userId, WELCOME_BONUS, 'welcome', 'Bonus de bienvenue');
   if (!refCode) return;
@@ -241,7 +269,7 @@ function deleteAccount(userId) {
 }
 
 module.exports = {
-  dailyStatus, claimDaily, STREAK_MILESTONES,
+  dailyStatus, claimDaily, STREAK_MILESTONES, giftStatus, openGift, GIFT_TABLE,
   ensureRefCode, onSignup, referralInfo, discordAgeDays,
   BADGES, badgesOf, afterEvent, unlock,
   leaderboard, positionOf, history, onboarding, exportData, deleteAccount, logPoints,

@@ -56,7 +56,7 @@ router.get('/stats', async (req, res) => {
     const stats = ch.getUserStats(userId);
     if (!stats) return res.status(401).json({ ok: false, message: 'Compte introuvable.' });
     const user = dbGet('SELECT * FROM users WHERE id=?', [userId]);
-    res.json({ ok: true, ...stats, daily: loyalty.dailyStatus(user), onboarding: loyalty.onboarding(userId),
+    res.json({ ok: true, ...stats, daily: loyalty.dailyStatus(user), gift: loyalty.giftStatus(user), onboarding: loyalty.onboarding(userId),
       month: loyalty.positionOf(userId, 'month'), gamesDisabled: !!user.games_disabled });
   } catch (e) {
     console.error('[stats]', e);
@@ -111,6 +111,7 @@ router.post('/epic', (req, res) => {
 
 // ── Fidélisation ───────────────────────────────────────────────────────────────
 router.post('/daily', (req, res) => res.json(loyalty.claimDaily(req.session.userId)));
+router.post('/gift', (req, res) => res.json(loyalty.openGift(req.session.userId, req.body?.choice)));
 router.get('/profile', (req, res) => {
   const id = req.session.userId;
   res.json({ ok: true, badges: loyalty.badgesOf(id), history: loyalty.history(id, 40), referral: loyalty.referralInfo(id),
