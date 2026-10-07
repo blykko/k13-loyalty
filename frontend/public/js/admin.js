@@ -11,10 +11,6 @@ const CH_TYPES = {
   invite:    '🎟️ Invitations Discord (auto)',
   join:      '🚪 Rejoindre le Discord',
   follow:    '✅ Follow Twitch (API)',
-  tw_like:    '❤️ X : liker un tweet',
-  tw_retweet: '🔁 X : retweeter un tweet',
-  tw_reply:   '💬 X : commenter un tweet',
-  tw_follow:  '➕ X : s\'abonner au compte',
 };
 const CATEGORIES = { permanent: '♾️ Permanent', daily: '🔄 Quotidien', weekly: '📅 Hebdo', monthly: '📆 Mensuel', contest: '🏆 Concours' };
 const CAT_REPEAT = { daily: 86400, weekly: 604800, monthly: 2592000 };
@@ -92,7 +88,7 @@ async function loadOverview() {
   el('k-games').textContent = `${d.games.players} · ${d.games.house >= 0 ? '+' : ''}${fmtNum(d.games.house)} pts`;
   const st = (ok, label) => `<span class="status ${ok ? 'ok' : 'ko'}">${ok ? '✓' : '✗'} ${label}</span>`;
   el('integration-status').innerHTML = st(d.botConfigured, 'Bot Discord') + st(d.adminChannelConfigured, 'Salon admin Discord (validations)')
-    + st(d.twitterConfigured, 'Liaison X') + st(d.seConfigured, 'StreamElements (visionnage auto)') + st(d.stripeConfigured, 'Stripe (codes promo)');
+    + st(d.seConfigured, 'StreamElements (visionnage auto)') + st(d.stripeConfigured, 'Stripe (codes promo)');
 
   const colors = { gold: '#EAB308', silver: '#94A3B8', bronze: '#CD7C32' };
   const total = d.rankDist.reduce((a, r) => a + r.c, 0) || 1;
@@ -155,7 +151,7 @@ function renderUsers() {
     <td><strong>${esc(u.discord_username || u.username)}</strong>${u.discord_username && u.discord_username !== u.username ? `<br><small class="muted">${esc(u.username)}</small>` : ''}</td>
     <td><strong style="color:var(--blue)">${fmtNum(u.points)}</strong><br><small class="muted">${fmtNum(u.lifetime_points)} cumulés</small></td>
     <td><span class="pill ${esc(u.rank)}">${rankLabel(u.rank)}</span></td>
-    <td>${[u.discord_id ? '💬' : '', u.twitch_login ? '🟣' : '', u.twitter_username ? '𝕏' : '', u.epic_username ? '🎮' : ''].join(' ')}</td>
+    <td>${[u.discord_id ? '💬' : '', u.twitch_login ? '🟣' : '', u.twitter_username ? '𝕏' : '', u.instagram_username ? '📸' : '', u.epic_username ? '🎮' : ''].join(' ')}</td>
     <td>${u.challenges_done}</td>
     <td>${fmtTime(u.twitch_watch_seconds)}</td>
     <td>${fmtNum(u.discord_messages)}</td>
@@ -175,7 +171,7 @@ async function openUser(id) {
     <div class="amodal-head"><div class="amodal-title">${esc(u.discord_username || u.username)}</div>${closeBtn()}</div>
     <div class="chips">
       ${chip('Points disponibles', fmtNum(u.points))}${chip('Points cumulés', fmtNum(u.lifetime_points))}${chip('Rang', rankLabel(u.rank))}
-      ${chip('Discord', u.discord_username ? '@' + u.discord_username : '')}${chip('Twitch', u.twitch_login ? '@' + u.twitch_login : '')}${chip('X', u.twitter_username ? '@' + u.twitter_username : '')}${chip('MP Discord', u.notify_dm ? 'Activés' : 'Désactivés')}
+      ${chip('Discord', u.discord_username ? '@' + u.discord_username : '')}${chip('Twitch', u.twitch_login ? '@' + u.twitch_login : '')}${chip('X', u.twitter_username ? '@' + u.twitter_username : '')}${chip('Instagram', u.instagram_username ? '@' + u.instagram_username : '')}${chip('MP Discord', u.notify_dm ? 'Activés' : 'Désactivés')}
       ${chip('Epic', u.epic_username)}${chip('Code créateur', u.epic_creator_code)}${chip('Inscrit le', fmtDate(u.created_at))}${chip('Vu le', fmtDate(u.last_seen))}
     </div>
     <form class="toolbar" id="pts-form">
@@ -303,14 +299,12 @@ function challengeForm(c) {
     const t = f.type.value, cat = f.category.value;
     const show = (k, on) => f.querySelector(`[data-when="${k}"]`).classList.toggle('hidden', !on);
     show('threshold', ['watchtime', 'messages', 'vocal', 'invite'].includes(t));
-    show('url', ['redirect', 'screen', 'follow'].includes(t) || t.startsWith('tw_'));
-    el('url-label').textContent = t === 'tw_follow' ? 'Lien du profil X à suivre (https://x.com/compte)'
-      : t.startsWith('tw_') ? 'Lien du tweet (https://x.com/compte/status/…)' : 'Lien à ouvrir';
-    if (t.startsWith('tw_')) f.platform.value = 'twitter';
+    show('url', ['redirect', 'screen', 'follow'].includes(t));
+    el('url-label').textContent = 'Lien à ouvrir';
     show('delay', t === 'redirect');
     show('repeat', !CAT_REPEAT[cat]);
     el('thr-label').textContent = { watchtime: 'Temps de visionnage (minutes)', vocal: 'Temps en vocal (minutes)', messages: 'Nombre de messages', invite: 'Nombre d\'invitations' }[t] || 'Seuil';
-    f.redirect_url.required = t === 'redirect' || ['tw_like', 'tw_retweet', 'tw_reply'].includes(t);
+    f.redirect_url.required = t === 'redirect';
   };
   f.type.addEventListener('change', sync); f.category.addEventListener('change', sync); sync();
   f.addEventListener('submit', async e => {

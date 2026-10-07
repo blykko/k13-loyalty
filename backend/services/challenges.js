@@ -6,7 +6,6 @@ const { dbGet, dbRun, dbAll } = require('../models/db');
 const discord = require('./discord');
 const twitch  = require('./twitch');
 const se      = require('./streamelements');
-const twitter = require('./twitter');
 const notify  = require('./notify');
 const T       = require('./time');
 
@@ -157,7 +156,6 @@ function needsAdminReview(ch) {
   return ch.type === 'screen';
 }
 
-const TWITTER_TYPES = ['tw_like', 'tw_retweet', 'tw_reply', 'tw_follow'];
 const UPLOADS = path.join(__dirname, '../../frontend/public/uploads');
 const removeUpload = p => { if (p) fs.unlink(path.join(UPLOADS, path.basename(p)), () => {}); };
 
@@ -268,6 +266,10 @@ async function verifyChallenge(userId, slug) {
   // ── Redirection + timer ─────────────────────────────────────────────────
   if (ch.type === 'redirect') {
     if (!ch.redirect_url) return { ok: false, message: 'Lien manquant, contacte un admin.' };
+    // Défis X / Instagram : le membre renseigne d'abord son @ (pas de vérification, sert à l'équipe)
+    const handle = { twitter: 'twitter_username', instagram: 'instagram_username' }[ch.platform];
+    if (handle && !user[handle])
+      return { ok: false, needsHandle: ch.platform, message: `Ajoute d'abord ton @${ch.platform === 'twitter' ? 'X' : 'Instagram'} dans « Comptes liés ».` };
     const token = initiateRedirect(userId, ch.id);
     return { ok: false, redirect: true, url: ch.redirect_url, token,
       delay: ch.redirect_delay || 20, challengeName: ch.name, challengeId: ch.id };
@@ -286,29 +288,6 @@ async function verifyChallenge(userId, slug) {
     }
     completeChallenge(userId, ch, pk);
     return { ok: true, message: `+${ch.points} pts ! Follow Twitch vérifié ✅`, points: ch.points };
-  }
-
-  // ── X (Twitter) : like, retweet, commentaire, abonnement ────────────────
-  if (TWITTER_TYPES.includes(ch.type)) {
-    if (entry?.verified === 0) return { ok: false, pending: true, message: '⏳ Déjà en attente de validation par l\'équipe K13.' };
-    if (!user.twitter_id) return { ok: false, message: 'Lie ton compte X pour ce défi.', needsLink: 'twitter' };
-    try {
-      const done = await twitter.verifyAction(userId, ch.type, ch.redirect_url);
-      if (!done) {
-        const what = { tw_like: 'liké le tweet', tw_retweet: 'retweeté le tweet', tw_reply: 'commenté le tweet', tw_follow: 'suivi le compte' }[ch.type];
-        return { ok: false, message: `On ne voit pas encore que tu as ${what}. Ça peut prendre une minute, réessaie.`, openUrl: ch.redirect_url };
-      }
-    } catch (e) {
-      if (e instanceof twitter.TwitterRelink) return { ok: false, message: e.message, needsLink: 'twitter' };
-      if (e instanceof twitter.TwitterUnavailable) {
-        // L'API X ne permet pas de vérifier : on transmet à l'équipe (validation sur Discord)
-        createPending(userId, ch, pk);
-        return { ok: false, pending: true, message: '⏳ Vérification transmise à l\'équipe K13, tu seras prévenu en MP.' };
-      }
-      return { ok: false, message: 'Erreur X : ' + e.message };
-    }
-    completeChallenge(userId, ch, pk);
-    return { ok: true, message: `+${ch.points} pts ! "${ch.name}" validé ✅`, points: ch.points };
   }
 
   // ── Discord : rejoindre le serveur ──────────────────────────────────────
@@ -373,7 +352,8 @@ function getUserStats(userId) {
       rank: user.rank, nextRank: nextRank(user.lifetime_points),
       discord_id: user.discord_id, discord_username: user.discord_username, discord_avatar: user.discord_avatar,
       twitch_login: user.twitch_login, twitch_id: user.twitch_id, epic_username: user.epic_username,
-      twitter_username: user.twitter_username, notify_dm: !!user.notify_dm },
+      twitter_username: user.twitter_username, instagram_username: user.instagram_username,
+      notify_dm: !!user.notify_dm },
     challenges: list,
     progression: { done, total: list.length, pct: list.length ? Math.round(done / list.length * 100) : 0 },
     activity: {
@@ -384,7 +364,6 @@ function getUserStats(userId) {
     codes:  dbAll("SELECT code,discount,used,expires_at, (expires_at < datetime('now')) AS expired FROM promo_codes WHERE user_id=? ORDER BY created_at DESC", [userId]),
     orders: dbAll('SELECT o.id,o.result,o.created_at,i.name AS item_name,i.type AS item_type FROM shop_orders o JOIN shop_items i ON o.item_id=i.id WHERE o.user_id=? ORDER BY o.created_at DESC', [userId]),
     seConfigured: se.isConfigured(),
-    twitterConfigured: twitter.isConfigured(),
   };
 }
 
@@ -403,5 +382,5 @@ module.exports = {
   RANKS, rankFor, nextRank, updateRank, addPoints, removePoints, logPoints,
   getPeriodKey, getEntry, markDone, completeChallenge, getProgress, autoCheck,
   verifyChallenge, validateRedirectTimer, submitScreenshot, getUserStats, needsAdminReview,
-  approvePending, rejectPending, TWITTER_TYPES,
+  approvePending, rejectPending,
 };

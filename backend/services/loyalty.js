@@ -173,7 +173,7 @@ const BADGES = [
   { id: 'rank_gold',       icon: '🥇', name: 'Gold',          desc: 'Atteindre le rang Gold' },
   { id: 'referral_1',      icon: '🤝', name: 'Recruteur',     desc: 'Parrainer 1 membre actif' },
   { id: 'referral_5',      icon: '📣', name: 'Ambassadeur',   desc: 'Parrainer 5 membres actifs' },
-  { id: 'connected',       icon: '🔗', name: 'Connecté',      desc: 'Lier Twitch et X' },
+  { id: 'connected',       icon: '🔗', name: 'Connecté',      desc: 'Lier Discord et Twitch' },
   { id: 'jackpot',         icon: '🎰', name: 'Jackpot',       desc: 'Gagner sur un numéro à la roulette' },
   { id: 'blackjack',       icon: '🃏', name: 'Blackjack !',   desc: 'Faire un blackjack naturel' },
 ];
@@ -187,7 +187,7 @@ function badgeChecks(userId) {
     first_challenge: done >= 1, challenges_10: done >= 10, challenges_50: done >= 50, challenges_200: done >= 200,
     streak_7: u.best_streak >= 7, streak_30: u.best_streak >= 30, streak_100: u.best_streak >= 100,
     rank_silver: u.rank === 'silver' || u.rank === 'gold', rank_gold: u.rank === 'gold',
-    referral_1: refs >= 1, referral_5: refs >= 5, connected: !!(u.twitch_id && u.twitter_id),
+    referral_1: refs >= 1, referral_5: refs >= 5, connected: !!(u.twitch_id && u.discord_id),
   };
 }
 
@@ -255,8 +255,8 @@ function onboarding(userId) {
 
 // ── RGPD : export et suppression ───────────────────────────────────────────────
 function exportData(userId) {
-  const user = dbGet(`SELECT id, username, points, lifetime_points, rank, discord_id, discord_username, twitch_login, twitter_username,
-    epic_username, epic_creator_code, streak, best_streak, notify_dm, games_disabled, created_at, last_seen FROM users WHERE id=?`, [userId]);
+  const user = dbGet(`SELECT id, username, points, lifetime_points, rank, discord_id, discord_username, twitch_login,
+    twitter_username, instagram_username, epic_username, epic_creator_code, streak, best_streak, notify_dm, games_disabled, created_at, last_seen FROM users WHERE id=?`, [userId]);
   return {
     exported_at: new Date().toISOString(), user,
     challenges: dbAll('SELECT c.name, uc.verified, uc.completed_at, uc.period_key FROM user_challenges uc JOIN challenges c ON c.id=uc.challenge_id WHERE uc.user_id=?', [userId]),

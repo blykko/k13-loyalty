@@ -27,11 +27,6 @@ const ERRORS = {
   twitch_denied: 'Connexion Twitch annulée.',
   twitch_link_failed: 'Erreur lors de la liaison Twitch.',
   twitch_state_mismatch: 'Session expirée pendant la liaison Twitch, réessaie.',
-  twitter_already_linked: 'Ce compte X est déjà lié à un autre membre.',
-  twitter_denied: 'Liaison X annulée.',
-  twitter_link_failed: 'Erreur lors de la liaison X, réessaie.',
-  twitter_state_mismatch: 'Session expirée pendant la liaison X, réessaie.',
-  twitter_not_configured: 'La liaison X n\'est pas encore configurée sur le site.',
   twitch_already_linked: 'Ce compte Twitch est déjà lié à un autre membre.',
   discord_not_configured: 'Connexion Discord indisponible : configuration serveur manquante. Préviens un admin.',
   discord_auth_failed: 'Connexion Discord annulée.',
@@ -45,7 +40,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   syncDarkBtn();
   const params = new URLSearchParams(location.search);
   if (params.get('error')) toast(ERRORS[params.get('error')] || params.get('error').replace(/_/g, ' '), 'error');
-  if (params.get('linked')) toast(`✅ Compte ${{ twitch: 'Twitch', twitter: 'X' }[params.get('linked')] || params.get('linked')} lié avec succès !`, 'success');
+  if (params.get('linked')) toast(`✅ Compte ${{ twitch: 'Twitch' }[params.get('linked')] || params.get('linked')} lié avec succès !`, 'success');
   if (location.search) history.replaceState({}, '', location.pathname + location.hash);
 
   const me = await api('GET', '/auth/me');
@@ -68,7 +63,6 @@ async function loadAll() {
     Object.assign(STATE, {
       user: stats.user, challenges: stats.challenges, codes: stats.codes, orders: stats.orders,
       progression: stats.progression, activity: stats.activity || {}, seConfigured: !!stats.seConfigured,
-      twitterConfigured: !!stats.twitterConfigured,
       daily: stats.daily, gift: stats.gift, onboarding: stats.onboarding, month: stats.month, gamesDisabled: !!stats.gamesDisabled,
     });
   } else toast(stats.message || 'Erreur de chargement.', 'error');
@@ -143,13 +137,14 @@ function setAvatar(id, url, letter) {
 function renderAccounts() {
   const u = STATE.user;
   const chip = (icon, label, linked, attrs = '') => linked
-    ? `<div class="acc-chip linked">${icon} ${esc(label)} <span class="acc-ok">✓</span></div>`
+    ? (attrs ? `<button class="acc-chip linked" ${attrs} title="Modifier">${icon} ${esc(label)} <span class="acc-ok">✓</span></button>`
+      : `<div class="acc-chip linked">${icon} ${esc(label)} <span class="acc-ok">✓</span></div>`)
     : `<button class="acc-chip unlinked" ${attrs}>${icon} ${esc(label)}</button>`;
   el('accounts-row').innerHTML = [
     chip('💬', u.discord_username ? '@' + u.discord_username : 'Discord', !!u.discord_id),
     u.twitch_login ? chip('🟣', '@' + u.twitch_login, true) : chip('🟣', 'Lier Twitch', false, 'data-action="link-twitch"'),
-    u.twitter_username ? chip('𝕏', '@' + u.twitter_username, true)
-      : STATE.twitterConfigured ? chip('𝕏', 'Lier X (Twitter)', false, 'data-action="link-twitter"') : '',
+    u.twitter_username ? chip('𝕏', '@' + u.twitter_username, true, 'data-action="socials-open"') : chip('𝕏', 'Ajouter mon @X', false, 'data-action="socials-open"'),
+    u.instagram_username ? chip('📸', '@' + u.instagram_username, true, 'data-action="socials-open"') : chip('📸', 'Ajouter mon @Insta', false, 'data-action="socials-open"'),
     u.epic_username ? chip('🎮', u.epic_username, true) : chip('🎮', 'Lier Epic Games', false, 'data-action="epic-open"'),
   ].join('');
   el('notify-dm').checked = !!u.notify_dm;
@@ -219,8 +214,7 @@ function chItem(c) {
   const isTime = c.type === 'watchtime' || c.type === 'vocal';
   const meta = [`<span class="ch-pts">+${c.points} pts</span>`];
   if (c.repeat_seconds) meta.push(`<span class="ch-tag">${repeatText(c.repeat_seconds)}</span>`);
-  const typeTag = { redirect: '🔗 Lien', screen: '📸 Screen', watchtime: '📺 Auto', messages: '🤖 Auto', vocal: '🤖 Auto', invite: '🤖 Auto', join: '✓ Vérif. auto', follow: '✓ Vérif. auto',
-    tw_like: '❤️ Like', tw_retweet: '🔁 Retweet', tw_reply: '💬 Commentaire', tw_follow: '➕ Abonnement' }[c.type];
+  const typeTag = { redirect: '🔗 Lien', screen: '📸 Screen', watchtime: '📺 Auto', messages: '🤖 Auto', vocal: '🤖 Auto', invite: '🤖 Auto', join: '✓ Vérif. auto', follow: '✓ Vérif. auto' }[c.type];
   if (typeTag) meta.push(`<span class="ch-tag">${typeTag}</span>`);
 
   let prog = '';
@@ -236,7 +230,6 @@ function chItem(c) {
   if (c.completed) btn = `<span class="btn-ch done">✓ Validé</span>`;
   else if (c.screenshotPending) btn = `<button class="btn-ch pending" data-action="verify" ${data} title="Renvoyer un screen">⏳ En attente</button>`;
   else if (c.pending) btn = `<span class="btn-ch pending" title="En attente de validation par l'équipe">⏳ En attente</span>`;
-  else if (c.type.startsWith('tw_')) btn = `<div class="ch-btns">${c.redirect_url ? `<a class="btn-ch ghost" href="${esc(c.redirect_url)}" target="_blank" rel="noopener">Ouvrir ↗</a>` : ''}<button class="btn-ch do" data-action="verify" ${data}>Vérifier</button></div>`;
   else if (c.type === 'redirect') btn = `<button class="btn-ch do" data-action="redirect" ${data}>Visiter →</button>`;
   else if (c.type === 'screen') btn = `<button class="btn-ch do" data-action="verify" ${data}>📸 Envoyer</button>`;
   else if (c.progress && c.progress.current < c.progress.required) btn = `<button class="btn-ch ghost" data-action="verify" ${data}>Actualiser</button>`;
@@ -323,9 +316,10 @@ document.addEventListener('click', e => {
     case 'bj':          return withBusy(a, () => bjMove(a.dataset.move));
     case 'delete-account': return deleteAccount();
     case 'link-twitch': location.href = '/auth/twitch'; return;
-    case 'link-twitter': location.href = '/auth/twitter'; return;
     case 'epic-open':   show('epic-form'); el('epic-username').focus(); return;
     case 'epic-cancel': hide('epic-form'); return;
+    case 'socials-open': return openSocials();
+    case 'socials-cancel': hide('socials-form'); return;
   }
 });
 el('notify-dm').addEventListener('change', async e => {
@@ -341,6 +335,7 @@ el('btn-modal-close').addEventListener('click', closeModal);
 el('modal-overlay').addEventListener('click', e => { if (e.target.id === 'modal-overlay') closeModal(); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && !el('modal-overlay').classList.contains('hidden')) closeModal(); });
 el('epic-form').addEventListener('submit', saveEpic);
+el('socials-form').addEventListener('submit', saveSocials);
 el('modal-screen-section').addEventListener('submit', uploadScreenshot);
 el('modal-screen-input').addEventListener('change', e => previewScreen(e.target.files[0]));
 el('btn-modal-confirm').addEventListener('click', () => { const fn = modalConfirm; closeModal(); fn?.(); });
@@ -369,10 +364,7 @@ async function verifyChallenge(c) {
     if (res.openUrl && !c.screenshotPending) openTab(res.openUrl);
     return openScreenModal(res.challengeId, res.challengeName || c.name, res.requireAdmin);
   }
-  if (res.needsLink === 'twitter') {
-    toast(res.message, 'error');
-    return confirmModal('𝕏', 'Lier ton compte X', 'Ce défi vérifie ton activité sur X : relie ton compte (lecture seule, aucun post en ton nom).', 'Lier X', () => { location.href = '/auth/twitter'; });
-  }
+  if (res.needsHandle) return askHandle(res.needsHandle, res.message);
   if (res.pending) { toast(res.message, 'pending'); return loadAll(); }
   if (res.needsLink === 'twitch') {
     toast(res.message, 'error');
@@ -384,13 +376,25 @@ async function verifyChallenge(c) {
 }
 
 // ── Lien + timer ──────────────────────────────────────────────────────────────
+// Défis X / Instagram : le membre doit d'abord renseigner son @
+const HANDLE_FIELD = { twitter: 'twitter_username', instagram: 'instagram_username' };
+function askHandle(platform, message) {
+  toast(message || `Ajoute d'abord ton @${platform === 'instagram' ? 'Instagram' : 'X'}.`, 'error');
+  showPage('dashboard');
+  openSocials();
+  const input = el(platform === 'instagram' ? 'social-instagram' : 'social-twitter');
+  input.focus();
+  el('socials-form').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
 async function startRedirect(c) {
+  if (HANDLE_FIELD[c.platform] && !STATE.user?.[HANDLE_FIELD[c.platform]]) return askHandle(c.platform);
   // La fenêtre est ouverte AVANT l'appel réseau, sinon les bloqueurs de pop-up l'interceptent
   // (sans 'noopener' dans les options : window.open renverrait alors null)
   const win = c.redirect_url ? openTab(c.redirect_url) : null;
   const res = await api('POST', `/api/user/challenge/${encodeURIComponent(c.slug)}/verify`);
   if (!res.redirect) {
     try { win?.close(); } catch {}
+    if (res.needsHandle) return askHandle(res.needsHandle, res.message);
     toast(res.message, res.ok ? 'success' : 'error');
     if (res.ok) loadAll();
     return;
@@ -489,6 +493,19 @@ async function saveEpic(e) {
   const res = await api('POST', '/api/user/epic', { epic_username: el('epic-username').value.trim(), epic_creator_code: el('epic-code').value.trim() });
   toast(res.message, res.ok ? 'success' : 'error');
   if (res.ok) { hide('epic-form'); loadAll(); }
+}
+
+// ── @ X / Instagram ────────────────────────────────────────────────────────────
+function openSocials() {
+  el('social-twitter').value = STATE.user?.twitter_username ? '@' + STATE.user.twitter_username : '';
+  el('social-instagram').value = STATE.user?.instagram_username ? '@' + STATE.user.instagram_username : '';
+  show('socials-form'); el('social-twitter').focus();
+}
+async function saveSocials(e) {
+  e.preventDefault();
+  const res = await api('POST', '/api/user/socials', { twitter: el('social-twitter').value, instagram: el('social-instagram').value });
+  toast(res.message, res.ok ? 'success' : 'error');
+  if (res.ok) { hide('socials-form'); loadAll(); }
 }
 
 // ── Boutique ───────────────────────────────────────────────────────────────────
