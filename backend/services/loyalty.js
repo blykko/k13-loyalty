@@ -15,22 +15,27 @@ const { addPoints, logPoints } = require('./challenges');
 const STREAK_MILESTONES = { 7: 750, 14: 1500, 30: 3000, 60: 6000, 100: 15000 };
 const dailyReward = streak => 150 + 50 * Math.min(streak - 1, 12);
 
-function shiftDay(dateStr, days) {
-  const [y, m, d] = dateStr.split('-').map(Number);
-  const x = new Date(Date.UTC(y, m - 1, d + days));
-  return `${x.getUTCFullYear()}-${String(x.getUTCMonth() + 1).padStart(2, '0')}-${String(x.getUTCDate()).padStart(2, '0')}`;
+// Jours entre deux dates AAAA-MM-JJ
+const dayGap = (from, to) => Math.round((Date.parse(to + 'T00:00:00Z') - Date.parse(from + 'T00:00:00Z')) / 86400000);
+// Jours ratés depuis le dernier /daily (0 si la série est intacte)
+function missedDays(user, today = T.parisDate()) {
+  if (!user.last_daily) return 0;
+  return Math.max(0, dayGap(user.last_daily, today) - 1);
 }
 
 function dailyStatus(user) {
   const today = T.parisDate();
   const claimed = user.last_daily === today;
-  // Série encore valide si la dernière réclamation date d'aujourd'hui ou d'hier
-  const alive = claimed || user.last_daily === shiftDay(today, -1);
+  // Série encore valide si la dernière réclamation date d'aujourd'hui ou d'hier,
+  // ou si les protections de série couvrent les jours ratés
+  const missed = claimed ? 0 : missedDays(user, today);
+  const shields = user.streak_shields || 0;
+  const alive = claimed || (user.last_daily && missed <= shields);
   const current = alive ? user.streak : 0;
   const nextStreak = claimed ? current + 1 : current + 1;
   const nextMilestone = Object.keys(STREAK_MILESTONES).map(Number).find(n => n >= nextStreak);
   return {
-    claimed, streak: current, best: user.best_streak,
+    claimed, streak: current, best: user.best_streak, shields, shieldsNeeded: alive && !claimed ? missed : 0,
     nextReward: dailyReward(nextStreak) + (STREAK_MILESTONES[nextStreak] || 0),
     nextMilestone: nextMilestone ? { day: nextMilestone, bonus: STREAK_MILESTONES[nextMilestone] } : null,
     resetsAt: T.periodStart(T.DAY, new Date(Date.now() + 86400000)).toISOString(),
@@ -45,19 +50,22 @@ function claimDaily(userId) {
     const st = dailyStatus(user);
     return { ok: false, already: true, ...st, message: `Déjà récupéré aujourd'hui ! Reviens demain pour ${st.nextReward} pts (série de ${st.streak} 🔥).` };
   }
-  const streak = user.last_daily === shiftDay(today, -1) ? user.streak + 1 : 1;
+  const missed = missedDays(user, today), shields = user.streak_shields || 0;
+  const saved = missed > 0 && user.streak > 0 && missed <= shields ? missed : 0;
+  const streak = user.last_daily && (missed === 0 || saved) ? user.streak + 1 : 1;
   const reward = dailyReward(streak);
   const bonus = STREAK_MILESTONES[streak] || 0;
   // Mise à jour conditionnelle : évite un double /daily simultané (site + Discord)
-  const r = dbRun('UPDATE users SET streak=?, best_streak=MAX(best_streak,?), last_daily=? WHERE id=? AND IFNULL(last_daily,\'\')!=?',
-    [streak, streak, today, userId, today]);
+  const r = dbRun('UPDATE users SET streak=?, best_streak=MAX(best_streak,?), last_daily=?, streak_shields=streak_shields-? WHERE id=? AND IFNULL(last_daily,\'\')!=?',
+    [streak, streak, today, saved, userId, today]);
   if (!r.changes) return { ok: false, already: true, message: 'Déjà récupéré aujourd\'hui !' };
   addPoints(userId, reward, 'daily', `Bonus quotidien (jour ${streak})`);
   if (bonus) addPoints(userId, bonus, 'daily', `Palier de série : ${streak} jours`);
   const lost = user.streak > 1 && streak === 1 ? user.streak : 0;
   const badges = afterEvent(userId, 'daily');
   return { ok: true, streak, reward, bonus, lost, badges,
-    message: `+${reward + bonus} pts ! Série : ${streak} jour${streak > 1 ? 's' : ''} 🔥${bonus ? ` (palier +${bonus} pts 🎉)` : ''}${lost ? ` — ta série de ${lost} jours était perdue, c'est reparti !` : ''}` };
+    shieldsUsed: saved,
+    message: `+${reward + bonus} pts ! Série : ${streak} jour${streak > 1 ? 's' : ''} 🔥${bonus ? ` (palier +${bonus} pts 🎉)` : ''}${saved ? ` — 🧊 ${saved} protection${saved > 1 ? 's' : ''} utilisée${saved > 1 ? 's' : ''}, ta série est sauvée !` : ''}${lost ? ` — ta série de ${lost} jours était perdue, c'est reparti !` : ''}` };
 }
 
 // ── Cadeau du jour : choisir 1 cadeau parmi 3 ──────────────────────────────────
@@ -202,8 +210,14 @@ function badgesOf(userId) {
 }
 
 // ── Classements ────────────────────────────────────────────────────────────────
-// "Mois" : points GAGNÉS depuis le 1er du mois (hors jeux) ; "total" : points cumulés
+// "Solde" : points actuellement sur le compte ; "Mois" : points GAGNÉS depuis le 1er du mois (hors jeux) ;
+// "total" : points cumulés
+const PERIODS = ['points', 'month', 'all'];
 function leaderboard(period = 'month', limit = 50) {
+  if (period === 'points') {
+    return dbAll(`SELECT id, username, discord_username, discord_id, discord_avatar, rank, streak, points
+      FROM users WHERE points>0 ORDER BY points DESC, created_at ASC LIMIT ?`, [limit]);
+  }
   if (period === 'month') {
     const from = T.toSql(T.periodStart(T.MONTH));
     return dbAll(`SELECT u.id, u.username, u.discord_username, u.discord_id, u.discord_avatar, u.rank, u.streak,
@@ -277,5 +291,5 @@ module.exports = {
   dailyStatus, claimDaily, STREAK_MILESTONES, giftStatus, openGift, GIFT_TABLE,
   ensureRefCode, onSignup, referralInfo, discordAgeDays,
   BADGES, badgesOf, afterEvent, unlock,
-  leaderboard, positionOf, history, onboarding, exportData, deleteAccount, logPoints,
+  leaderboard, PERIODS, positionOf, history, onboarding, exportData, deleteAccount, logPoints,
 };

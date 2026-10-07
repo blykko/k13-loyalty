@@ -4,7 +4,7 @@ const bcrypt  = require('bcryptjs');
 const path    = require('path');
 const fs      = require('fs');
 const fetch   = require('node-fetch');
-const { dbGet, dbAll, dbRun } = require('../models/db');
+const { dbGet, dbAll, dbRun, dbBackup } = require('../models/db');
 const discord = require('../services/discord');
 const twitch  = require('../services/twitch');
 const se      = require('../services/streamelements');
@@ -246,7 +246,7 @@ router.delete('/challenges/:id', (req, res) => {
 });
 
 // ── Boutique ───────────────────────────────────────────────────────────────────
-const SHOP_TYPES = ['promo_code', 'discord_role', 'product'];
+const SHOP_TYPES = ['promo_code', 'discord_role', 'product', 'streak_shield'];
 router.get('/shop', (req, res) => res.json({ ok: true, items: dbAll(`
   SELECT i.*, (SELECT COUNT(*) FROM shop_orders o WHERE o.item_id=i.id) AS sold
   FROM shop_items i ORDER BY i.active DESC, i.cost_points`) }));
@@ -327,13 +327,48 @@ router.post('/challenges/:id/reset', (req, res) => {
   res.json({ ok: true, message: `"${ch.name}" réinitialisé pour tous (${validated.length} validation(s) retirée(s)).` });
 });
 
-// Reset global
-router.post('/reset-all', (req, res) => {
+// ── Resets globaux ─────────────────────────────────────────────────────────────
+// Une sauvegarde complète est écrite dans data/backups avant chaque reset.
+const backupBefore = tag => { try { return path.basename(dbBackup(14, tag)); } catch (e) { console.error('[Reset] sauvegarde impossible :', e.message); return null; } };
+// Tables d'activité liées aux membres (colonne qui référence le membre)
+const MEMBER_DATA = [['user_challenges', 'user_id'], ['pending_redirects', 'user_id'], ['twitch_watch_sessions', 'user_id'],
+  ['discord_activity', 'user_id'], ['discord_invites', 'inviter_id'], ['points_log', 'user_id'], ['user_badges', 'user_id'],
+  ['blackjack_games', 'user_id']];
+
+// 1) Nouvelle saison : tout repart de zéro, mais les comptes (inscriptions, comptes liés,
+//    parrainages déjà comptés) sont conservés. Les achats boutique et codes promo restent.
+router.post('/reset-season', (req, res) => {
   if (req.body?.confirmText !== 'CONFIRMER') return res.status(400).json({ ok: false, message: 'Confirmation incorrecte.' });
+  const backup = backupBefore('avant-saison');
   resetEntries('', []);
-  resetActivity();
-  if (req.body.resetPoints) dbRun("UPDATE users SET points=0, lifetime_points=0, rank='bronze'");
-  res.json({ ok: true, message: `Défis de tous les membres réinitialisés${req.body.resetPoints ? ' (points remis à 0)' : ''}.` });
+  for (const [table] of MEMBER_DATA) if (table !== 'user_challenges') dbRun(`DELETE FROM ${table}`);
+  dbRun("UPDATE users SET points=0, lifetime_points=0, rank='bronze', streak=0, best_streak=0, last_daily=NULL, last_gift=NULL");
+  const n = dbGet('SELECT COUNT(*) AS c FROM users').c;
+  console.log('[Reset] nouvelle saison, sauvegarde :', backup);
+  res.json({ ok: true, message: `Nouvelle saison : ${n} membre(s) remis à zéro (comptes conservés).${backup ? ` Sauvegarde : ${backup}` : ''}` });
+});
+
+// 2) Reset total : supprime aussi tous les comptes membres (les membres devront se réinscrire).
+//    Défis, boutique, réglages et mot de passe admin sont conservés.
+router.post('/reset-everything', (req, res) => {
+  if (req.body?.confirmText !== 'TOUT SUPPRIMER') return res.status(400).json({ ok: false, message: 'Confirmation incorrecte.' });
+  const backup = backupBefore('avant-reset-total');
+  const n = dbGet('SELECT COUNT(*) AS c FROM users').c;
+  resetEntries('', []);
+  for (const [table] of [...MEMBER_DATA, ['shop_orders'], ['promo_codes']]) if (table !== 'user_challenges') dbRun(`DELETE FROM ${table}`);
+  for (const t of ['giveaway_entries', 'giveaway_winners']) { try { dbRun(`DELETE FROM ${t}`); } catch {} }
+  dbRun('DELETE FROM users');
+  // Déconnecte les membres (la session admin, elle, reste ouverte)
+  for (const sess of dbAll('SELECT sid, data FROM sessions')) {
+    try {
+      const d = JSON.parse(sess.data);
+      if (d.isAdmin) { delete d.userId; dbRun('UPDATE sessions SET data=? WHERE sid=?', [JSON.stringify(d), sess.sid]); }
+      else dbRun('DELETE FROM sessions WHERE sid=?', [sess.sid]);
+    } catch {}
+  }
+  if (req.session) delete req.session.userId;
+  console.log('[Reset] reset total, sauvegarde :', backup);
+  res.json({ ok: true, message: `Reset total : ${n} compte(s) supprimé(s).${backup ? ` Sauvegarde : ${backup}` : ''}` });
 });
 
 // ── Réglages des jeux ──────────────────────────────────────────────────────────

@@ -239,8 +239,13 @@
       </form>
       <div class="card danger-zone" style="grid-column:1/-1">
         <div class="card-title" style="color:var(--red)">⚠️ Zone dangereuse</div>
-        <p class="muted" style="margin-bottom:10px">Réinitialise les défis, compteurs (messages, vocal, visionnage, invitations) de <strong>tous</strong> les membres.</p>
-        <button class="btn-sm danger" id="btn-reset-all">Tout réinitialiser…</button>
+        <p class="muted" style="margin-bottom:6px"><strong>Nouvelle saison</strong> : points, rangs, défis validés, séries, badges, historique et compteurs (messages, vocal, visionnage, invitations) remis à zéro. <strong>Les comptes sont conservés</strong> (inscriptions, Discord/Twitch/X liés, parrainages, achats boutique).</p>
+        <p class="muted" style="margin-bottom:12px"><strong>Reset total</strong> : supprime en plus <strong>tous les comptes membres</strong> (ils devront se réinscrire), commandes et codes promo. Les défis, la boutique et les réglages restent.</p>
+        <p class="muted" style="margin-bottom:12px">Une sauvegarde complète de la base est faite automatiquement avant chaque reset (dossier <code>data/backups</code>).</p>
+        <div class="toolbar" style="margin:0">
+          <button class="btn-sm danger" id="btn-reset-season">↺ Nouvelle saison…</button>
+          <button class="btn-sm danger" id="btn-reset-everything">🗑️ Reset total…</button>
+        </div>
       </div>
     </div>
   </section>

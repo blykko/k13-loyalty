@@ -157,6 +157,15 @@ function startBot() {
 
   // ── Boutons Accepter / Refuser du salon admin ─────────────────────────────
   client.on(Events.InteractionCreate, async interaction => {
+    try { await onInteraction(interaction); }
+    catch (e) {
+      // Ex. "Unknown interaction" (réponse trop tardive) : on log sans faire tomber le serveur
+      console.warn('[Bot Discord] Interaction en erreur :', interaction.customId || interaction.commandName || '?', e.message);
+      const msg = { content: '⚠️ Oups, une erreur est survenue. Réessaie dans un instant.', flags: MessageFlags.Ephemeral };
+      if (interaction.isRepliable?.()) await (interaction.replied || interaction.deferred ? interaction.followUp(msg) : interaction.reply(msg)).catch(() => {});
+    }
+  });
+  async function onInteraction(interaction) {
     // Commandes slash (/daily, /points, jeux…) et boutons du blackjack
     if (await require('./discord-commands').handle(interaction)) return;
     if (!interaction.isButton()) return;
@@ -180,7 +189,12 @@ function startBot() {
       await interaction.message.edit({ components: [] }).catch(() => {});
       await interaction.followUp({ content: `ℹ️ ${res.message}`, flags: MessageFlags.Ephemeral }).catch(() => {});
     }
-  });
+  }
+
+  // Sans écouteur, un événement 'error' (coupure réseau, gateway Discord…) fait planter tout le serveur
+  client.on(Events.Error, e => console.error('[Bot Discord] Erreur client :', e.message));
+  client.on(Events.ShardError, e => console.error('[Bot Discord] Erreur de connexion (reconnexion auto) :', e.message));
+  client.on(Events.Warn, w => console.warn('[Bot Discord]', w));
 
   client.login(token).catch(err => {
     console.error('[Bot Discord] Erreur de connexion :', err.message);

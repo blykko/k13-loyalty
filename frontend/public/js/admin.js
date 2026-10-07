@@ -18,7 +18,7 @@ const CH_TYPES = {
 };
 const CATEGORIES = { permanent: '♾️ Permanent', daily: '🔄 Quotidien', weekly: '📅 Hebdo', monthly: '📆 Mensuel', contest: '🏆 Concours' };
 const CAT_REPEAT = { daily: 86400, weekly: 604800, monthly: 2592000 };
-const SHOP_TYPES = { promo_code: '🎟️ Code promo', discord_role: '🏅 Rôle Discord', product: '📦 Produit' };
+const SHOP_TYPES = { promo_code: '🎟️ Code promo', discord_role: '🏅 Rôle Discord', product: '📦 Récompense à traiter (live, vidéo, produit…)', streak_shield: '🧊 Protection de série' };
 
 // ── Auth ───────────────────────────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', async () => {
@@ -398,6 +398,7 @@ function itemForm(item) {
       <div class="fg"><label class="fl">Type</label><select class="fi" name="type" ${item ? 'disabled' : ''}>${Object.entries(SHOP_TYPES).map(([k, l]) => `<option value="${k}" ${k === v.type ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
       <div class="fg"><label class="fl">Coût (points)</label><input class="fi" type="number" name="cost_points" min="1" value="${v.cost_points}" required/></div>
       <div class="fg"><label class="fl">Stock</label><input class="fi" type="number" name="stock" min="-1" value="${v.stock}"/><div class="fh">-1 = illimité</div></div>
+      <div class="fg"><label class="fl">Emoji (optionnel)</label><input class="fi" name="emoji" value="${esc(extra.emoji || '')}" maxlength="8" placeholder="🎁"/></div>
       <div class="fg" data-when="promo_code"><label class="fl">Réduction (%)</label><input class="fi" type="number" name="discount" min="1" max="100" value="${extra.discount || 10}"/><div class="fh">Stripe : un coupon STRIPE_COUPON_&lt;%&gt; doit exister.</div></div>
       <div class="fg" data-when="promo_code"><label class="fl">Palier (préfixe du code)</label><select class="fi" name="tier">${['bronze', 'silver', 'gold'].map(t => `<option ${t === (extra.tier || 'bronze') ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
       <div class="fg span2" data-when="discord_role"><label class="fl">ID du rôle Discord</label><input class="fi" name="role_id" value="${esc(extra.role_id || '')}" placeholder="1234567890123456789" pattern="\\d{15,21}"/><div class="fh">Le rôle du bot doit être au-dessus de ce rôle dans Discord.</div></div>
@@ -419,6 +420,7 @@ function itemForm(item) {
       if (!f.role_id.value.trim()) return toast('ID du rôle Discord requis.', 'error');
       ex = { role_id: f.role_id.value.trim() };
     }
+    if (f.emoji.value.trim()) ex.emoji = f.emoji.value.trim();
     const body = { name: f.name.value.trim(), description: f.description.value.trim(), type, cost_points: +f.cost_points.value, stock: parseInt(f.stock.value, 10), extra: ex };
     if (Number.isNaN(body.stock)) body.stock = -1;
     const r = item ? await api('PATCH', `/api/admin/shop/${item.id}`, body) : await api('POST', '/api/admin/shop', body);
@@ -501,14 +503,21 @@ el('pwd-form').addEventListener('submit', async e => {
   toast(r.message, r.ok ? 'success' : 'error');
   if (r.ok) e.target.reset();
 });
-el('btn-reset-all').addEventListener('click', async () => {
-  const choice = await choiceDialog('Réinitialiser TOUS les membres ?', 'Toutes les validations et tous les compteurs seront effacés. Action irréversible.',
-    [['keep', 'Défis seulement'], ['zero', 'Défis + points à 0']], true);
-  if (!choice) return;
-  const typed = await promptDialog('Confirmation', 'Tape CONFIRMER pour continuer.');
+el('btn-reset-season').addEventListener('click', async () => {
+  if (!await confirmDialog('Lancer une nouvelle saison ?', 'Points, rangs, défis, séries, badges et historique de TOUS les membres repartent de zéro. Les comptes sont conservés.', 'Continuer')) return;
+  const typed = await promptDialog('Confirmation', 'Tape CONFIRMER pour remettre tous les membres à zéro.');
   if (typed !== 'CONFIRMER') return toast('Annulé.');
-  const r = await api('POST', '/api/admin/reset-all', { confirmText: 'CONFIRMER', resetPoints: choice === 'zero' });
+  const r = await api('POST', '/api/admin/reset-season', { confirmText: typed });
   toast(r.message, r.ok ? 'success' : 'error');
+  if (r.ok) loadOverview();
+});
+el('btn-reset-everything').addEventListener('click', async () => {
+  if (!await confirmDialog('Supprimer TOUS les comptes ?', 'Tous les membres, leurs points, défis, commandes et codes promo sont supprimés. Ils devront se réinscrire. Les défis et la boutique restent.', 'Continuer')) return;
+  const typed = await promptDialog('Confirmation', 'Tape TOUT SUPPRIMER pour confirmer.');
+  if (typed !== 'TOUT SUPPRIMER') return toast('Annulé.');
+  const r = await api('POST', '/api/admin/reset-everything', { confirmText: typed });
+  toast(r.message, r.ok ? 'success' : 'error');
+  if (r.ok) loadOverview();
 });
 
 // ── Modales ────────────────────────────────────────────────────────────────────

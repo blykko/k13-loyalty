@@ -13,15 +13,15 @@ const { requireUser } = require('../middleware/auth');
 
 const router = express.Router();
 
-// ── Classement public (page /leaderboard) ──────────────────────────────────────
 const loyalty = require('../services/loyalty');
 const games   = require('../services/games');
 
-// ── Classement public (page /leaderboard) : ?period=month|all ─────────────────
+// ── Classement public (page /leaderboard) : ?period=points|month|all ──────────
 const lbCache = {};
 router.get('/leaderboard', (req, res) => {
-  const period = req.query.period === 'all' ? 'all' : 'month';
-  if (!lbCache[period] || Date.now() - lbCache[period].at > 60_000) lbCache[period] = { at: Date.now(), data: loyalty.leaderboard(period, 50) };
+  const period = loyalty.PERIODS.includes(req.query.period) ? req.query.period : 'points';
+  // Le solde bouge à chaque partie : cache plus court
+  if (!lbCache[period] || Date.now() - lbCache[period].at > (period === 'points' ? 10_000 : 60_000)) lbCache[period] = { at: Date.now(), data: loyalty.leaderboard(period, 50) };
   res.json({ ok: true, period, leaderboard: lbCache[period].data, me: req.session?.userId || null });
 });
 
@@ -115,7 +115,7 @@ router.post('/gift', (req, res) => res.json(loyalty.openGift(req.session.userId,
 router.get('/profile', (req, res) => {
   const id = req.session.userId;
   res.json({ ok: true, badges: loyalty.badgesOf(id), history: loyalty.history(id, 40), referral: loyalty.referralInfo(id),
-    month: loyalty.positionOf(id, 'month'), all: loyalty.positionOf(id, 'all') });
+    points: loyalty.positionOf(id, 'points'), month: loyalty.positionOf(id, 'month'), all: loyalty.positionOf(id, 'all') });
 });
 router.get('/export', (req, res) => {
   res.setHeader('Content-Disposition', 'attachment; filename="k13-loyalty-mes-donnees.json"');
@@ -137,7 +137,7 @@ const withBadges = (id, r) => { if (r.ok) r.limits = games.limits(id); return r;
 router.post('/games/coinflip', (req, res) => res.json(withBadges(req.session.userId, games.coinflip(req.session.userId, req.body?.bet, req.body?.choice))));
 router.post('/games/roulette', (req, res) => res.json(withBadges(req.session.userId, games.roulette(req.session.userId, req.body?.bet, req.body?.type, req.body?.value))));
 router.post('/games/blackjack/start', (req, res) => res.json(withBadges(req.session.userId, games.blackjackStart(req.session.userId, req.body?.bet))));
-router.post('/games/blackjack/:action(hit|stand|double)', (req, res) => res.json(withBadges(req.session.userId, games.blackjackAction(req.session.userId, req.params.action))));
+router.post('/games/blackjack/:action(hit|stand|double|split)', (req, res) => res.json(withBadges(req.session.userId, games.blackjackAction(req.session.userId, req.params.action))));
 
 // ── Préférences ────────────────────────────────────────────────────────────────
 router.post('/settings', (req, res) => {

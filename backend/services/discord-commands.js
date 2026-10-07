@@ -1,7 +1,7 @@
 'use strict';
 /**
  * Commandes slash du bot : /daily /points /classement /defis /parrainage /badges
- * et jeux : /pileouface /roulette /blackjack (boutons Tirer / Rester / Doubler).
+ * et jeux : /pileouface /roulette /blackjack (boutons Tirer / Rester / Doubler / Séparer).
  * Enregistrées sur le serveur DISCORD_GUILD_ID au démarrage du bot.
  */
 const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags } = require('discord.js');
@@ -17,11 +17,11 @@ const COMMANDS = [
   new SlashCommandBuilder().setName('points').setDescription('Affiche tes points (ou ceux d\'un membre)')
     .addUserOption(o => o.setName('membre').setDescription('Membre à consulter')),
   new SlashCommandBuilder().setName('classement').setDescription('Top 10 des membres')
-    .addStringOption(o => o.setName('periode').setDescription('Période').addChoices({ name: 'Ce mois', value: 'month' }, { name: 'Depuis toujours', value: 'all' })),
+    .addStringOption(o => o.setName('periode').setDescription('Période').addChoices({ name: 'Solde actuel', value: 'points' }, { name: 'Ce mois', value: 'month' }, { name: 'Depuis toujours', value: 'all' })),
   new SlashCommandBuilder().setName('defis').setDescription('Tes défis du jour restants'),
   new SlashCommandBuilder().setName('parrainage').setDescription('Ton lien de parrainage'),
   new SlashCommandBuilder().setName('badges').setDescription('Tes badges débloqués'),
-  new SlashCommandBuilder().setName('pileouface').setDescription('Pile ou face : gain ×1,9')
+  new SlashCommandBuilder().setName('pileouface').setDescription('Pile ou face : mise doublée si tu gagnes')
     .addIntegerOption(o => o.setName('mise').setDescription('Points misés').setRequired(true).setMinValue(1))
     .addStringOption(o => o.setName('choix').setDescription('Pile ou face').setRequired(true).addChoices({ name: 'Pile', value: 'pile' }, { name: 'Face', value: 'face' })),
   new SlashCommandBuilder().setName('roulette').setDescription('Roulette européenne')
@@ -80,27 +80,27 @@ async function handleCommand(i) {
     const target = i.options.getUser('membre') || i.user;
     const t = userOf(target.id);
     if (!t) return i.reply({ content: target.id === i.user.id ? `Tu n'as pas encore de compte 👉 ${site()}` : 'Ce membre n\'a pas de compte K13 Loyalty.', flags: MessageFlags.Ephemeral });
-    const pos = loyalty.positionOf(t.id, 'month');
+    const pos = loyalty.positionOf(t.id, 'month'), bal = loyalty.positionOf(t.id, 'points');
     const d = loyalty.dailyStatus(t);
     return i.reply({ embeds: [new EmbedBuilder().setColor(0x2563EB).setTitle(`⭐ ${t.discord_username || t.username}`)
       .addFields(
-        { name: 'Points', value: fmt(t.points), inline: true },
+        { name: 'Points', value: fmt(t.points) + (bal ? ` (#${bal.position})` : ''), inline: true },
         { name: 'Rang', value: RANK_LABEL[t.rank] || t.rank, inline: true },
-        { name: 'Série', value: `${d.streak} 🔥`, inline: true },
+        { name: 'Série', value: `${d.streak} 🔥${d.shields ? ` · 🧊 ${d.shields}` : ''}`, inline: true },
         { name: 'Ce mois', value: pos ? `#${pos.position} (${fmt(pos.points)} pts)` : '–', inline: true },
         { name: 'Total gagné', value: fmt(t.lifetime_points), inline: true })] });
   }
 
   if (name === 'classement') {
-    const period = i.options.getString('periode') || 'month';
+    const period = i.options.getString('periode') || 'points';
     const list = loyalty.leaderboard(period, 10);
     const medals = ['🥇', '🥈', '🥉'];
     const lines = list.map((r, n) => `${medals[n] || `**${n + 1}.**`} ${r.discord_id ? `<@${r.discord_id}>` : (r.discord_username || r.username)} — ${fmt(r.points)} pts`);
     const me = u && loyalty.positionOf(u.id, period);
     return i.reply({ embeds: [new EmbedBuilder().setColor(0xF59E0B)
-      .setTitle(period === 'month' ? '🏆 Classement du mois' : '🏆 Classement général')
+      .setTitle({ points: '💰 Classement des soldes', month: '🏆 Classement du mois', all: '🏆 Classement général' }[period])
       .setDescription((lines.join('\n') || 'Personne pour l\'instant, fonce !') + (me ? `\n\nToi : **#${me.position}** (${fmt(me.points)} pts)` : ''))
-      .setFooter({ text: period === 'month' ? 'Points gagnés ce mois (hors jeux) · remis à zéro le 1er' : 'Points gagnés depuis l\'inscription' })],
+      .setFooter({ text: { points: 'Points actuellement sur le compte (jeux et achats compris)', month: 'Points gagnés ce mois (hors jeux) · remis à zéro le 1er', all: 'Points gagnés depuis l\'inscription' }[period] })],
       allowedMentions: { parse: [] } });
   }
 

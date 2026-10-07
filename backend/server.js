@@ -130,4 +130,13 @@ initDb().then(() => {
   };
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
+  // Une promesse rejetée non gérée (API Discord/Twitch indisponible…) ne doit pas arrêter le site
+  process.on('unhandledRejection', e => console.error('[Erreur non gérée]', e?.stack || e));
+  // Exception vraiment inattendue : on sauvegarde la base puis on quitte proprement ;
+  // Docker relance le conteneur (restart: unless-stopped)
+  process.on('uncaughtException', e => {
+    console.error('[Exception fatale]', e?.stack || e);
+    try { dbFlush(); } catch {}
+    process.exit(1);
+  });
 }).catch(e => { console.error('DB init failed:', e); process.exit(1); });

@@ -6,12 +6,14 @@ const stripe  = require('./stripe');
 
 const PROMO_VALIDITY_DAYS = 30;
 
-function getItems() {
-  return dbAll('SELECT id,name,description,type,cost_points,stock FROM shop_items WHERE active=1 ORDER BY cost_points');
-}
-
 function parseExtra(item) {
   try { return JSON.parse(item.extra || '{}'); } catch { return {}; }
+}
+
+const MAX_SHIELDS = 3;
+function getItems() {
+  return dbAll('SELECT id,name,description,type,cost_points,stock,extra FROM shop_items WHERE active=1 ORDER BY cost_points')
+    .map(({ extra, ...i }) => ({ ...i, emoji: parseExtra({ extra }).emoji || null }));
 }
 
 function randomCode(tier) {
@@ -40,6 +42,9 @@ async function purchase(userId, itemId) {
     if (!(await discord.checkGuildMember(user.discord_id).catch(() => false)))
       return { ok: false, message: 'Rejoins d\'abord le serveur Discord K13 pour recevoir le rôle.' };
   }
+
+  if (item.type === 'streak_shield' && (user.streak_shields || 0) >= MAX_SHIELDS)
+    return { ok: false, message: `Tu as déjà ${MAX_SHIELDS} protections de série en réserve (le maximum).` };
 
   // Débit atomique (évite le double achat par double-clic)
   const debit = dbRun('UPDATE users SET points=points-? WHERE id=? AND points>=?', [item.cost_points, userId, item.cost_points]);
@@ -88,14 +93,22 @@ async function purchase(userId, itemId) {
     result = 'Rôle attribué sur Discord !';
   }
 
-  // ── Produit physique / autre : traité manuellement par l'admin ─────────────
-  const status = item.type === 'product' ? 'pending' : 'completed';
-  if (item.type === 'product') result = 'Commande enregistrée — un admin va te contacter.';
+  // ── Protection de série : ajoutée à la réserve, consommée par le /daily ──────
+  if (item.type === 'streak_shield') {
+    dbRun('UPDATE users SET streak_shields=MIN(?, streak_shields+1) WHERE id=?', [MAX_SHIELDS, userId]);
+    const n = dbGet('SELECT streak_shields FROM users WHERE id=?', [userId]).streak_shields;
+    result = `🧊 ${n} protection${n > 1 ? 's' : ''} de série en réserve.`;
+  }
 
-  dbRun('INSERT INTO shop_orders (user_id,item_id,status,result) VALUES (?,?,?,?)', [userId, itemId, status, result]);
+  // ── Récompense "manuelle" (live, vidéo, emote…) : traitée par l'admin ────────
+  const status = item.type === 'product' ? 'pending' : 'completed';
+  if (item.type === 'product') result = 'Commande enregistrée : un admin te contacte sur Discord.';
+
+  const order = dbRun('INSERT INTO shop_orders (user_id,item_id,status,result) VALUES (?,?,?,?)', [userId, itemId, status, result]);
+  if (status === 'pending') require('./notify').notifyOrder(order.lastInsertRowid).catch(() => {});
   // Le rang dépend des points cumulés : un achat ne fait pas perdre de palier.
 
   return { ok: true, message: '✅ Achat confirmé !', result, item: item.name, type: item.type };
 }
 
-module.exports = { getItems, purchase };
+module.exports = { getItems, purchase, MAX_SHIELDS };
