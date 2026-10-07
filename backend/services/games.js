@@ -5,9 +5,10 @@
  * Garde-fous :
  *  - les points ne s'achètent jamais avec de l'argent réel ;
  *  - les gains ne comptent ni pour le rang ni pour le classement (raison 'game') ;
- *  - mise min/max et nombre de parties par jour limités ;
+ *  - mise min/max et nombre de parties par jour réglables (illimités par défaut) ;
  *  - chaque membre peut désactiver les jeux pour lui-même.
- * L'avantage "maison" retire des points du circuit (pile ou face ×1,9 ; roulette à un zéro).
+ * Probabilités identiques au casino : pile ou face équitable (×2), roulette européenne à un zéro
+ * (avantage maison 2,7 %), blackjack aux règles classiques (avantage maison ≈ 0,5 % en jouant bien).
  */
 const crypto = require('crypto');
 const { dbGet, dbRun } = require('../models/db');
@@ -34,14 +35,14 @@ function setConfig(v) {
   dbRun("INSERT OR REPLACE INTO app_settings (key,value) VALUES ('games',?)", [JSON.stringify(c)]);
   return c;
 }
-const COIN_PAYOUT = 1.9;
+const COIN_PAYOUT = 2; // pile ou face équitable : mise doublée, 50 % de chances
 const rnd = n => crypto.randomInt(n);
 
 function limits(userId) {
   const c = config();
   const from = T.toSql(T.periodStart(T.DAY));
-  // Une partie = une mise initiale (le "doubler" du blackjack ne compte pas)
-  const played = dbGet("SELECT COUNT(*) AS c FROM points_log WHERE user_id=? AND reason='game' AND delta<0 AND label NOT LIKE '%(double)' AND created_at>=?", [userId, from]).c;
+  // Une partie = une mise initiale (doubler / séparer au blackjack ne comptent pas)
+  const played = dbGet("SELECT COUNT(*) AS c FROM points_log WHERE user_id=? AND reason='game' AND delta<0 AND label NOT LIKE '%(double)' AND label NOT LIKE '%(split)' AND created_at>=?", [userId, from]).c;
   return { minBet: c.minBet, maxBet: c.maxBet, daily: c.daily, played, left: c.daily ? Math.max(0, c.daily - played) : null };
 }
 
@@ -115,61 +116,104 @@ function roulette(userId, bet, type, value) {
 }
 
 // ── Blackjack ──────────────────────────────────────────────────────────────────
-// Croupier tire jusqu'à 17, blackjack payé 3:2, doubler possible sur les 2 premières cartes
+// Règles casino classiques : sabot de 6 jeux mélangé à chaque main, le croupier tire jusqu'à 16
+// et reste sur tous les 17, blackjack payé 3:2, le croupier vérifie son blackjack d'entrée
+// (on ne perd alors que la mise de départ). Doubler sur 2 cartes (aussi après un split),
+// séparer deux cartes de même valeur jusqu'à 4 mains, As séparés : une seule carte chacun.
 const SUITS = ['♠', '♥', '♦', '♣'], RANKS = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
+const DECKS = 6, MAX_HANDS = 4;
 function newDeck() {
   const d = [];
-  for (const s of SUITS) for (const r of RANKS) d.push(r + s);
+  for (let k = 0; k < DECKS; k++) for (const s of SUITS) for (const r of RANKS) d.push(r + s);
   for (let i = d.length - 1; i > 0; i--) { const j = rnd(i + 1); [d[i], d[j]] = [d[j], d[i]]; }
   return d;
 }
+const rankOf = c => c.slice(0, -1);
+const cardValue = c => { const r = rankOf(c); return r === 'A' ? 11 : ['J', 'Q', 'K'].includes(r) ? 10 : +r; };
 function handValue(cards) {
   let total = 0, aces = 0;
-  for (const c of cards) {
-    const r = c.slice(0, -1);
-    if (r === 'A') { aces++; total += 11; } else total += ['J', 'Q', 'K'].includes(r) ? 10 : +r;
-  }
+  for (const c of cards) { const v = cardValue(c); if (v === 11) aces++; total += v; }
   while (total > 21 && aces) { total -= 10; aces--; }
   return total;
 }
 const isBlackjack = cards => cards.length === 2 && handValue(cards) === 21;
 
+const totalBet = g => g.hands.reduce((s, h) => s + h.bet, 0);
+const hand = g => g.hands[g.active];
+function canSplit(g) {
+  const h = hand(g);
+  return !!h && h.cards.length === 2 && g.hands.length < MAX_HANDS && cardValue(h.cards[0]) === cardValue(h.cards[1]) && !h.splitAces;
+}
+const canDouble = g => !!hand(g) && hand(g).cards.length === 2 && !hand(g).splitAces;
+
 function bjView(g, done = false) {
-  return { game: 'blackjack', bet: g.bet, player: g.player, playerValue: handValue(g.player),
+  const h = hand(g) || g.hands[g.hands.length - 1];
+  return { game: 'blackjack', bet: totalBet(g), baseBet: g.base, active: done ? -1 : g.active,
+    hands: g.hands.map(x => ({ cards: x.cards, value: handValue(x.cards), bet: x.bet, doubled: !!x.doubled, outcome: x.outcome || null })),
+    player: h.cards, playerValue: handValue(h.cards),
     dealer: done ? g.dealer : [g.dealer[0], '🂠'], dealerValue: done ? handValue(g.dealer) : handValue([g.dealer[0]]),
-    canDouble: !done && g.player.length === 2 && !g.doubled, done };
+    canDouble: !done && canDouble(g), canSplit: !done && canSplit(g), done };
 }
 
 function bjFinish(userId, g) {
-  const p = handValue(g.player);
-  if (p <= 21) while (handValue(g.dealer) < 17) g.dealer.push(g.deck.pop());
-  const d = handValue(g.dealer);
-  const pBJ = isBlackjack(g.player) && !g.doubled, dBJ = isBlackjack(g.dealer);
-  let payout = 0, outcome;
-  if (p > 21) outcome = 'bust';
-  else if (pBJ && !dBJ) { outcome = 'blackjack'; payout = Math.floor(g.bet * 2.5); }
-  else if (dBJ && !pBJ) outcome = 'lose';
-  else if (d > 21 || p > d) { outcome = 'win'; payout = g.bet * 2; }
-  else if (p === d) { outcome = 'push'; payout = g.bet; }
-  else outcome = 'lose';
+  const single = g.hands.length === 1;
+  const live = g.hands.some(h => handValue(h.cards) <= 21);
+  const pBJ = single && isBlackjack(g.hands[0].cards);
+  // Le croupier ne tire que s'il reste une main en jeu (et pas sur un blackjack du joueur)
+  if (live && !pBJ) while (handValue(g.dealer) < 17) g.dealer.push(g.deck.pop());
+  const d = handValue(g.dealer), dBJ = isBlackjack(g.dealer);
+  let payout = 0;
+  for (const h of g.hands) {
+    const p = handValue(h.cards);
+    if (p > 21) h.outcome = 'bust';
+    else if (single && isBlackjack(h.cards) && !dBJ) { h.outcome = 'blackjack'; h.payout = Math.floor(h.bet * 2.5); }
+    else if (dBJ && !(single && isBlackjack(h.cards))) h.outcome = 'lose';
+    else if (d > 21 || p > d) { h.outcome = 'win'; h.payout = h.bet * 2; }
+    else if (p === d) { h.outcome = 'push'; h.payout = h.bet; }
+    else h.outcome = 'lose';
+    payout += h.payout || 0;
+  }
+  const bet = totalBet(g);
   dbRun('DELETE FROM blackjack_games WHERE user_id=?', [userId]);
+  const outcome = single ? g.hands[0].outcome : payout > bet ? 'win' : payout === bet ? 'push' : 'lose';
   pay(userId, payout, outcome === 'push' ? 'Blackjack (égalité, mise rendue)' : 'Blackjack (gain)');
   let badge = null;
   if (outcome === 'blackjack' && require('./loyalty').unlock(userId, 'blackjack')) badge = 'blackjack';
-  const texts = { bust: `💥 Tu dépasses 21 (${p}) : perdu (-${g.bet} pts).`, blackjack: `🃏 BLACKJACK ! +${payout - g.bet} pts`,
-    win: `✅ ${p} contre ${d > 21 ? 'croupier sauté' : d} : gagné ! +${payout - g.bet} pts`, push: `🤝 Égalité (${p}) : mise rendue.`,
-    lose: `❌ ${p} contre ${d}${dBJ ? ' (blackjack du croupier)' : ''} : perdu (-${g.bet} pts).` };
-  return { ok: true, ...bjView(g, true), outcome, win: payout > g.bet, payout, net: payout - g.bet, balance: balance(userId), badge, message: texts[outcome] };
+  const dTxt = d > 21 ? 'croupier sauté' : `${d}${dBJ ? ' (blackjack)' : ''}`;
+  let message;
+  if (single) {
+    const p = handValue(g.hands[0].cards);
+    message = { bust: `💥 Tu dépasses 21 (${p}) : perdu (-${bet} pts).`, blackjack: `🃏 BLACKJACK ! +${payout - bet} pts`,
+      win: `✅ ${p} contre ${dTxt} : gagné ! +${payout - bet} pts`, push: `🤝 Égalité (${p}) : mise rendue.`,
+      lose: `❌ ${p} contre ${dTxt} : perdu (-${bet} pts).` }[outcome];
+  } else {
+    const word = { bust: '💥 sautée', win: '✅ gagnée', push: '🤝 égalité', lose: '❌ perdue' };
+    message = `${d > 21 ? `Croupier sauté (${d})` : `Croupier : ${dTxt}`}. ` + g.hands.map((h, i) => `Main ${i + 1} (${handValue(h.cards)}) ${word[h.outcome]}`).join(' · ')
+      + ` → ${payout - bet >= 0 ? '+' : ''}${payout - bet} pts`;
+  }
+  return { ok: true, ...bjView(g, true), outcome, win: payout > bet, payout, net: payout - bet, balance: balance(userId), badge, message };
 }
 
 function bjLoad(userId) {
   const row = dbGet('SELECT * FROM blackjack_games WHERE user_id=?', [userId]);
-  return row ? { ...JSON.parse(row.state), bet: row.bet, created_at: row.created_at } : null;
+  if (!row) return null;
+  const g = { ...JSON.parse(row.state), created_at: row.created_at };
+  // Ancien format (une seule main) : converti
+  if (!g.hands) { g.hands = [{ cards: g.player, bet: row.bet, doubled: !!g.doubled }]; g.active = 0; g.base = g.doubled ? row.bet / 2 : row.bet; delete g.player; delete g.doubled; }
+  return g;
 }
 function bjSave(userId, g) {
-  const { bet, created_at, ...state } = g;
+  const { created_at, ...state } = g;
   dbRun('INSERT OR REPLACE INTO blackjack_games (user_id,bet,state,created_at) VALUES (?,?,?,COALESCE(?,datetime(\'now\')))',
-    [userId, bet, JSON.stringify(state), created_at || null]);
+    [userId, totalBet(g), JSON.stringify(state), created_at || null]);
+}
+// Passe à la main suivante, ou termine la partie
+function bjNext(userId, g, msg) {
+  while (g.active < g.hands.length && g.hands[g.active].done) g.active++;
+  if (g.active >= g.hands.length) return bjFinish(userId, g);
+  bjSave(userId, g);
+  const h = hand(g);
+  return { ok: true, ...bjView(g), message: msg || (g.hands.length > 1 ? `Main ${g.active + 1} : tu as ${handValue(h.cards)}.` : `Tu as ${handValue(h.cards)}.`) };
 }
 
 function blackjackStart(userId, bet) {
@@ -178,31 +222,48 @@ function blackjackStart(userId, bet) {
   const t = takeBet(userId, bet, 'Blackjack');
   if (t.error) return { ok: false, message: t.error };
   const deck = newDeck();
-  const g = { bet: t.bet, deck, player: [deck.pop(), deck.pop()], dealer: [deck.pop(), deck.pop()], doubled: false };
-  if (isBlackjack(g.player) || isBlackjack(g.dealer)) return bjFinish(userId, g);
+  const p1 = deck.pop(), d1 = deck.pop(), p2 = deck.pop(), d2 = deck.pop();
+  const g = { base: t.bet, deck, hands: [{ cards: [p1, p2], bet: t.bet }], active: 0, dealer: [d1, d2] };
+  if (isBlackjack(g.hands[0].cards) || isBlackjack(g.dealer)) return bjFinish(userId, g);
   bjSave(userId, g);
-  return { ok: true, ...bjView(g), balance: balance(userId), message: `Tu as ${handValue(g.player)}. Tirer ou rester ?` };
+  return { ok: true, ...bjView(g), balance: balance(userId), message: `Tu as ${handValue(g.hands[0].cards)}. Tirer ou rester ?` };
 }
 
 function blackjackAction(userId, action) {
   const g = bjLoad(userId);
   if (!g) return { ok: false, message: 'Aucune partie en cours. Lance une nouvelle partie !' };
+  const h = hand(g);
   if (action === 'hit') {
-    g.player.push(g.deck.pop());
-    if (handValue(g.player) >= 21) return bjFinish(userId, g);
-    bjSave(userId, g);
-    return { ok: true, ...bjView(g), message: `Tu as ${handValue(g.player)}.` };
+    h.cards.push(g.deck.pop());
+    if (handValue(h.cards) >= 21) h.done = true;
+    return bjNext(userId, g);
   }
+  if (action === 'stand') { h.done = true; return bjNext(userId, g); }
   if (action === 'double') {
-    if (g.player.length !== 2 || g.doubled) return { ok: false, message: 'Doubler n\'est possible que sur les 2 premières cartes.' };
-    const r = dbRun('UPDATE users SET points=points-? WHERE id=? AND points>=?', [g.bet, userId, g.bet]);
+    if (!canDouble(g)) return { ok: false, message: 'Doubler n\'est possible que sur 2 cartes.' };
+    const r = dbRun('UPDATE users SET points=points-? WHERE id=? AND points>=?', [h.bet, userId, h.bet]);
     if (!r.changes) return { ok: false, message: 'Pas assez de points pour doubler.' };
-    logPoints(userId, -g.bet, 'game', 'Blackjack (double)');
-    g.bet *= 2; g.doubled = true;
-    g.player.push(g.deck.pop());
-    return bjFinish(userId, g);
+    logPoints(userId, -h.bet, 'game', 'Blackjack (double)');
+    h.bet *= 2; h.doubled = true; h.done = true;
+    h.cards.push(g.deck.pop());
+    return bjNext(userId, g);
   }
-  if (action === 'stand') return bjFinish(userId, g);
+  if (action === 'split') {
+    if (!canSplit(g)) return { ok: false, message: 'Séparer : 2 cartes de même valeur, 4 mains maximum.' };
+    const r = dbRun('UPDATE users SET points=points-? WHERE id=? AND points>=?', [h.bet, userId, h.bet]);
+    if (!r.changes) return { ok: false, message: 'Pas assez de points pour séparer.' };
+    logPoints(userId, -h.bet, 'game', 'Blackjack (split)');
+    const aces = rankOf(h.cards[0]) === 'A';
+    const second = { cards: [h.cards.pop(), g.deck.pop()], bet: h.bet };
+    h.cards.push(g.deck.pop());
+    g.hands.splice(g.active + 1, 0, second);
+    // As séparés : une seule carte chacun ; une main à 21 est terminée d'office
+    for (const x of [h, second]) {
+      if (aces) { x.splitAces = true; x.done = true; }
+      else if (handValue(x.cards) === 21) x.done = true;
+    }
+    return bjNext(userId, g, `Mains séparées ! Main ${g.active + 1} : tu as ${handValue(h.cards)}.`);
+  }
   return { ok: false, message: 'Action inconnue.' };
 }
 function blackjackState(userId) {

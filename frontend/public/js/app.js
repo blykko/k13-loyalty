@@ -264,13 +264,13 @@ function repeatText(s) {
 
 function renderShop() {
   const pts = STATE.user?.points || 0;
-  const emojis = { promo_code: '🎟️', discord_role: '🏅', product: '📦' };
+  const emojis = { promo_code: '🎟️', discord_role: '🏅', product: '📦', streak_shield: '🧊' };
   el('shop-grid').innerHTML = STATE.shopItems.map(item => {
     const can = pts >= item.cost_points;
     const soldOut = item.stock === 0;
     const pct = Math.min(100, Math.round(pts / item.cost_points * 100));
     return `<div class="shop-card ${can && !soldOut ? 'can' : ''}">
-      <div class="shop-emoji">${emojis[item.type] || '🎁'}</div>
+      <div class="shop-emoji">${esc(item.emoji || emojis[item.type] || '🎁')}</div>
       <div class="shop-name">${esc(item.name)}</div>
       <div class="shop-desc">${esc(item.description)}</div>
       <div class="shop-price">${fmtNum(item.cost_points)} pts</div>
@@ -543,11 +543,11 @@ window.addEventListener('beforeunload', () => {
 // ── Bonus quotidien & premiers pas ─────────────────────────────────────────────
 function renderDaily() {
   const d = STATE.daily; if (!d) return;
-  el('daily-title').textContent = `Série de ${d.streak} jour${d.streak > 1 ? 's' : ''}`;
+  el('daily-title').textContent = `Série de ${d.streak} jour${d.streak > 1 ? 's' : ''}${d.shields ? ` · 🧊 ${d.shields}` : ''}`;
   el('daily-flame').classList.toggle('cold', !d.streak);
   el('daily-sub').textContent = d.claimed
     ? `✅ Récupéré ! Reviens dans ${fmtUntil(d.resetsAt)} pour +${d.nextReward} pts.`
-    : `+${d.nextReward} pts à récupérer aujourd'hui${d.streak ? ' — ne casse pas ta série !' : ''}`
+    : `+${d.nextReward} pts à récupérer aujourd'hui${d.shieldsNeeded ? ` — 🧊 ${d.shieldsNeeded} protection${d.shieldsNeeded > 1 ? 's' : ''} va sauver ta série` : d.streak ? ' — ne casse pas ta série !' : ''}`
       + (d.nextMilestone ? ` · Palier ${d.nextMilestone.day} jours : +${d.nextMilestone.bonus} pts` : '');
   // 7 pastilles : jours déjà faits dans la semaine de série en cours
   const pos = d.streak % 7 || (d.streak ? 7 : 0);
@@ -623,6 +623,7 @@ async function loadProfile() {
   el('ref-count').innerHTML = `${ref.count} filleul${ref.count > 1 ? 's' : ''} · ${ref.rewarded} actif${ref.rewarded > 1 ? 's' : ''}
     <div class="ref-steps">${ref.milestones.map(m => `<span class="ref-step ${ref.rewarded >= m.count ? 'on' : ''}">${ref.rewarded >= m.count ? '✅' : '🎯'} ${m.count} actifs : +${fmtNum(m.bonus)}</span>`).join('')}</div>`;
   el('rank-pos').innerHTML = `
+    <div><span class="rp-num">${r.points ? '#' + r.points.position : '–'}</span><span class="rp-lbl">Solde actuel${r.points ? ` · ${fmtNum(r.points.points)} pts` : ''}</span></div>
     <div><span class="rp-num">${r.month ? '#' + r.month.position : '–'}</span><span class="rp-lbl">Ce mois${r.month ? ` · ${fmtNum(r.month.points)} pts` : ''}</span></div>
     <div><span class="rp-num">${r.all ? '#' + r.all.position : '–'}</span><span class="rp-lbl">Depuis toujours${r.all ? ` · ${fmtNum(r.all.points)} pts` : ''}</span></div>`;
   const have = r.badges.filter(b => b.unlocked).length;
@@ -676,6 +677,7 @@ const betOf = g => parseInt(el(`bet-${g}`).value, 10) || 0;
 
 async function loadGames() {
   renderBetRows();
+  buildWheel();
   const r = await api('GET', '/api/user/games');
   if (!r.ok) return;
   GAMES.limits = r.limits;
@@ -699,7 +701,8 @@ function afterGame(r, resultId) {
   if (r.limits) { GAMES.limits = r.limits; renderGamesInfo(); }
   if (r.balance !== undefined) updateBalance(r.balance);
   const box = el(resultId);
-  box.className = 'game-result ' + (r.ok === false ? 'err' : r.win ? 'win' : r.outcome === 'push' ? '' : 'lose');
+  const playing = r.game === 'blackjack' && !r.done;
+  box.className = 'game-result ' + (r.ok === false ? 'err' : playing || r.outcome === 'push' ? '' : r.win ? 'win' : 'lose');
   box.textContent = r.message;
   if (r.win && (r.payout >= r.bet * 3 || r.outcome === 'blackjack')) confetti();
   if (r.badge) showNewBadges([{ icon: r.badge === 'jackpot' ? '🎰' : '🃏', name: r.badge === 'jackpot' ? 'Jackpot' : 'Blackjack !' }]);
@@ -717,20 +720,95 @@ async function playCoin(choice) {
 
 const RED = new Set([1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36]);
 const numColor = n => n === 0 ? 'green' : RED.has(n) ? 'red' : 'black';
+// Roulette européenne dessinée en SVG (ordre réel des cases). La roue tourne dans un sens,
+// la bille dans l'autre, puis la bille descend et s'arrête dans la case tirée par le serveur.
+const WHEEL_ORDER = [0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23, 10, 5, 24, 16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7, 28, 12, 35, 3, 26];
+const RW = { wheel: 0, ball: 0, spinning: false, last: [] };
+const SEG = 360 / 37;
+const polar = (r, deg) => { const a = deg * Math.PI / 180; return [r * Math.sin(a), -r * Math.cos(a)]; };
+function ringPath(r1, r2, a0, a1) {
+  const [x1, y1] = polar(r2, a0), [x2, y2] = polar(r2, a1), [x3, y3] = polar(r1, a1), [x4, y4] = polar(r1, a0);
+  return `M${x1.toFixed(2)},${y1.toFixed(2)} A${r2},${r2} 0 0 1 ${x2.toFixed(2)},${y2.toFixed(2)} L${x3.toFixed(2)},${y3.toFixed(2)} A${r1},${r1} 0 0 0 ${x4.toFixed(2)},${y4.toFixed(2)}Z`;
+}
+function buildWheel() {
+  const svg = el('wheel');
+  if (!svg || svg.dataset.built) return;
+  const fill = { red: '#C81E1E', black: '#151B26', green: '#0E8A5F' };
+  let segs = '';
+  WHEEL_ORDER.forEach((n, k) => {
+    const a0 = (k - .5) * SEG, a1 = (k + .5) * SEG, c = fill[numColor(n)];
+    segs += `<path d="${ringPath(104, 124, a0, a1)}" fill="${c}" stroke="#D4A84B" stroke-width=".8"/>`
+      + `<path d="${ringPath(84, 104, a0, a1)}" fill="${c}" opacity=".78" stroke="#D4A84B" stroke-width="1.2"/>`
+      + `<text transform="rotate(${(k * SEG).toFixed(2)}) translate(0,-114)" text-anchor="middle" dominant-baseline="central" font-size="10.5" font-weight="700" fill="#fff" font-family="Sora,sans-serif">${n}</text>`;
+  });
+  const spokes = [0, 90, 180, 270].map(d => `<rect x="-3" y="-62" width="6" height="56" rx="3" fill="url(#rw-gold)" transform="rotate(${d})"/>`).join('');
+  svg.innerHTML = `<defs>
+      <radialGradient id="rw-wood" r=".5"><stop offset=".86" stop-color="#3A2314"/><stop offset=".93" stop-color="#7A4A26"/><stop offset="1" stop-color="#2A170C"/></radialGradient>
+      <radialGradient id="rw-cone" r=".5"><stop offset="0" stop-color="#C79A45"/><stop offset=".6" stop-color="#8A5A24"/><stop offset="1" stop-color="#4A2C14"/></radialGradient>
+      <linearGradient id="rw-gold" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#FDE68A"/><stop offset="1" stop-color="#B7791F"/></linearGradient>
+      <radialGradient id="rw-ballg" cx=".35" cy=".35" r=".7"><stop offset="0" stop-color="#fff"/><stop offset="1" stop-color="#C9CED6"/></radialGradient>
+    </defs>
+    <circle r="148" fill="url(#rw-wood)"/>
+    <circle r="142" fill="none" stroke="#B98A3E" stroke-width="2"/>
+    <circle r="126" fill="#24170E"/>
+    <g id="rw-rot">${segs}
+      <circle r="84" fill="url(#rw-cone)"/>
+      ${spokes}<circle r="12" fill="url(#rw-gold)"/><circle r="5" fill="#7C4A12"/>
+    </g>
+    <circle id="rw-ball" r="6" fill="url(#rw-ballg)" cx="0" cy="-134" style="filter:drop-shadow(0 1px 1px rgba(0,0,0,.6))"/>`;
+  svg.dataset.built = '1';
+  setWheel(RW.wheel, RW.ball, 134);
+}
+function setWheel(w, b, r) {
+  el('rw-rot').setAttribute('transform', `rotate(${w.toFixed(3)})`);
+  const [x, y] = polar(r, b);
+  const ball = el('rw-ball'); ball.setAttribute('cx', x.toFixed(2)); ball.setAttribute('cy', y.toFixed(2));
+}
+const smooth = x => { x = Math.min(1, Math.max(0, x)); return x * x * (3 - 2 * x); };
+function spinTo(n) {
+  return new Promise(resolve => {
+    const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const D = reduce ? 1200 : 5600, k = WHEEL_ORDER.indexOf(n);
+    const W0 = RW.wheel % 360, Wf = W0 + 720 + Math.random() * 360;
+    // Angle final de la bille = case k de la roue à l'arrêt, après au moins 4 tours en sens inverse
+    const target = Wf + k * SEG, base = RW.ball % 360 - 1440;
+    const Bf = base - (((base - target) % 360) + 360) % 360;
+    const M = Math.round((target - Bf) / 360);
+    const B0 = RW.ball % 360;
+    const t0 = performance.now();
+    const frame = now => {
+      const p = Math.min(1, (now - t0) / D);
+      const W = W0 + (Wf - W0) * (1 - Math.pow(1 - p, 3));
+      const free = B0 + (Bf - B0) * (1 - Math.pow(1 - p, 2.4));
+      const inPocket = W + k * SEG - 360 * M;
+      const s = smooth((p - .7) / .3);
+      const B = free + (inPocket - free) * s;
+      // La bille quitte la piste, rebondit sur les losanges puis tombe dans la case
+      const drop = smooth((p - .55) / .25);
+      const bounce = p > .62 && p < .9 ? Math.abs(Math.sin((p - .62) * 34)) * 7 * (1 - (p - .62) / .28) : 0;
+      setWheel(W, B, 134 - 40 * drop + bounce);
+      if (p < 1) requestAnimationFrame(frame);
+      else { RW.wheel = Wf; RW.ball = Bf; resolve(); }
+    };
+    requestAnimationFrame(frame);
+  });
+}
+function showRouletteNumber(n) {
+  const c = el('rw-center');
+  c.className = 'rw-center show ' + numColor(n); c.textContent = n;
+  RW.last = [n, ...RW.last].slice(0, 8);
+  el('rw-last').innerHTML = RW.last.map(x => `<span class="rw-chip ${numColor(x)}">${x}</span>`).join('');
+}
 async function playRoulette(type, value) {
-  const wheel = el('wheel'), num = el('wheel-num');
-  const req = api('POST', '/api/user/games/roulette', { bet: betOf('roulette'), type, value });
-  wheel.classList.add('spin');
-  // Défilement des numéros en ralentissant pendant la requête
-  let delay = 40;
-  while (delay < 220) {
-    const n = Math.floor(Math.random() * 37);
-    num.textContent = n; wheel.dataset.color = numColor(n);
-    await sleep(delay); delay *= 1.15;
-  }
-  const r = await req;
-  wheel.classList.remove('spin');
-  if (r.ok) { num.textContent = r.number; wheel.dataset.color = numColor(r.number); }
+  if (RW.spinning) return;
+  buildWheel();
+  const r = await api('POST', '/api/user/games/roulette', { bet: betOf('roulette'), type, value });
+  if (!r.ok) return afterGame(r, 'roulette-result');
+  RW.spinning = true;
+  el('rw-center').className = 'rw-center';
+  el('roulette-result').className = 'game-result'; el('roulette-result').textContent = '🎡 Les jeux sont faits, rien ne va plus…';
+  try { await spinTo(r.number); } finally { RW.spinning = false; }
+  showRouletteNumber(r.number);
   afterGame(r, 'roulette-result');
 }
 
@@ -741,14 +819,18 @@ function cardHTML(c, i = 0) {
 }
 function renderBJ(g) {
   el('bj-dealer').innerHTML = g ? g.dealer.map(cardHTML).join('') : '';
-  el('bj-player').innerHTML = g ? g.player.map(cardHTML).join('') : '';
   el('bj-dealer-val').textContent = g ? `(${g.dealerValue}${g.done ? '' : '+?'})` : '';
-  el('bj-player-val').textContent = g ? `(${g.playerValue})` : '';
+  const hands = g?.hands || [{ cards: [], value: null }], multi = hands.length > 1;
+  const TAG = { win: '✅', blackjack: '✅', push: '🤝', lose: '❌', bust: '💥' };
+  el('bj-hands').classList.toggle('multi', multi);
+  el('bj-hands').innerHTML = hands.map((h, n) => `<div class="bj-hand ${multi && g && !g.done && n === g.active ? 'active' : ''}">
+    <div class="bj-label">${multi ? `Main ${n + 1}` : 'Toi'} ${h.value !== null ? `(${h.value})` : ''}${multi ? ` · ${fmtNum(h.bet)} pts` : ''}${h.doubled ? ' · doublée' : ''} ${h.outcome ? TAG[h.outcome] : ''}</div>
+    <div class="bj-cards">${h.cards.map(cardHTML).join('')}</div></div>`).join('');
   const playing = g && !g.done;
   el('bj-actions').classList.toggle('hidden', !playing);
   el('bj-start-row').classList.toggle('hidden', !!playing);
   el('bj-bet').classList.toggle('hidden', !!playing);
-  if (playing) el('bj-double').disabled = !g.canDouble;
+  if (playing) { el('bj-double').disabled = !g.canDouble; el('bj-split').disabled = !g.canSplit; }
 }
 async function bjStart() {
   const r = await api('POST', '/api/user/games/blackjack/start', { bet: betOf('bj') });

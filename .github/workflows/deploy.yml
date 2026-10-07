@@ -55,4 +55,6 @@ jobs:
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
             docker compose pull k13-loyalty || true
             docker compose up -d --build --no-deps k13-loyalty
+            # Redémarrage automatique si le conteneur s'arrête (crash, reboot du VPS)
+            docker update --restart unless-stopped $(docker compose ps -q k13-loyalty) || true
             docker image prune -f

@@ -47,7 +47,7 @@
       <div class="lb-sub" id="lb-sub">Top 50 des membres par points gagnés</div>
     </div>
   </div>
-  <div class="cat-tabs"><button class="cat-tab active" data-period="month">📅 Ce mois</button><button class="cat-tab" data-period="all">♾️ Depuis toujours</button></div>
+  <div class="cat-tabs"><button class="cat-tab active" data-period="points">💰 Solde actuel</button><button class="cat-tab" data-period="month">📅 Ce mois</button><button class="cat-tab" data-period="all">♾️ Depuis toujours</button></div>
   <div id="podium" class="podium hidden"></div>
   <div id="lb-list"><div class="empty">Chargement…</div></div>
 </div>
@@ -71,13 +71,15 @@ document.querySelectorAll('[data-period]').forEach(b => b.onclick = () => {
   document.querySelectorAll('[data-period]').forEach(x => x.classList.toggle('active', x === b));
   load(b.dataset.period);
 });
-load('month');
+load('points');
 
 async function load(period) {
   let data;
   document.getElementById('podium').classList.add('hidden');
-  document.getElementById('lb-sub').textContent = period === 'month'
-    ? 'Points gagnés ce mois (hors jeux) · remise à zéro le 1er du mois' : 'Points gagnés depuis l\'inscription';
+  document.getElementById('lb-sub').textContent = {
+    points: 'Points actuellement sur le compte (jeux et achats compris)',
+    month: 'Points gagnés ce mois (hors jeux) · remise à zéro le 1er du mois',
+    all: 'Points gagnés depuis l\'inscription' }[period];
   try { data = await (await fetch('/api/user/leaderboard?period=' + period, { credentials: 'same-origin' })).json(); } catch { data = null; }
   const list = document.getElementById('lb-list');
   if (!data?.ok) { list.innerHTML = '<div class="empty">Impossible de charger le classement.</div>'; return; }

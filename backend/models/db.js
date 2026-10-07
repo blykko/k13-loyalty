@@ -164,7 +164,7 @@ function initDb() {
     // Fidélisation : série quotidienne, parrainage, jeux
     for (const [col, def] of [['streak', 'INTEGER NOT NULL DEFAULT 0'], ['best_streak', 'INTEGER NOT NULL DEFAULT 0'], ['last_daily', 'TEXT'],
       ['ref_code', 'TEXT'], ['referred_by', 'INTEGER'], ['referral_rewarded', 'INTEGER NOT NULL DEFAULT 0'],
-      ['games_disabled', 'INTEGER NOT NULL DEFAULT 0'], ['last_gift', 'TEXT']]) {
+      ['games_disabled', 'INTEGER NOT NULL DEFAULT 0'], ['last_gift', 'TEXT'], ['streak_shields', 'INTEGER NOT NULL DEFAULT 0']]) {
       if (!hasCol('users', col)) db.run(`ALTER TABLE users ADD COLUMN ${col} ${def}`);
     }
     db.run('CREATE UNIQUE INDEX IF NOT EXISTS ux_users_ref ON users(ref_code) WHERE ref_code IS NOT NULL');
@@ -254,6 +254,23 @@ function initDb() {
       ['Rôle VIP Discord','Rôle "VIP K13" exclusif + avantages.',                          'discord_role',15000,-1, '{}'],
     ].forEach(r => db.prepare('INSERT OR IGNORE INTO shop_items (name,description,type,cost_points,stock,extra) VALUES (?,?,?,?,?,?)').run(r));
 
+    // Nouveaux articles boutique (une seule fois ; modifiables / désactivables dans l'admin)
+    if (!db.exec("SELECT 1 FROM app_settings WHERE key='shop_v2'")[0]) {
+      const SHOP_V2 = [
+        ['Protection de série', 'Garde ta série 🔥 même si tu rates un jour de /daily. Utilisée automatiquement (3 max en réserve).', 'streak_shield', 2500, -1, '{"emoji":"🧊"}', 1],
+        ['Shout-out en live', 'Ton pseudo cité et remercié en direct pendant un live K13.', 'product', 7500, -1, '{"emoji":"📣"}', 1],
+        ['Choisis le jeu d\'un live', 'Tu décides du jeu (ou du mode) joué pendant une partie d\'un prochain live.', 'product', 15000, -1, '{"emoji":"🎮"}', 1],
+        ['Ton pseudo en fin de vidéo', 'Ton pseudo dans les remerciements d\'une prochaine vidéo K13.', 'product', 12000, -1, '{"emoji":"🎬"}', 1],
+        ['Une game avec K13 en live', 'Une place dans le lobby pour jouer avec l\'équipe K13 en direct.', 'product', 30000, 5, '{"emoji":"🕹️"}', 1],
+        ['Ton emote sur le Discord', 'Propose une emote : si elle est validée, elle est ajoutée au serveur avec ton nom.', 'product', 40000, -1, '{"emoji":"😎"}', 1],
+        ['Sub Twitch offert (1 mois)', 'Un abonnement Twitch d\'un mois offert sur la chaîne K13.', 'product', 60000, 3, '{"emoji":"💜"}', 0],
+      ];
+      for (const [name, description, type, cost, stock, extra, active] of SHOP_V2)
+        if (!db.exec('SELECT 1 FROM shop_items WHERE name=?', [name])[0])
+          db.run('INSERT INTO shop_items (name,description,type,cost_points,stock,extra,active) VALUES (?,?,?,?,?,?,?)', [name, description, type, cost, stock, extra, active]);
+      db.run("INSERT INTO app_settings (key,value) VALUES ('shop_v2', datetime('now'))");
+    }
+
     // Admin
     if (!db.exec('SELECT id FROM admin WHERE id=1')[0]?.values.length)
       db.run('INSERT INTO admin (id,password_hash) VALUES (1,?)', [bcrypt.hashSync(process.env.ADMIN_PASSWORD||'k13admin2025',12)]);
@@ -272,11 +289,13 @@ function dbRun(sql,p=[]){getDb().run(sql,p);const m=getDb().exec('SELECT last_in
 function dbFlush(){ if(_db) _db._persistNow(); }
 // Sauvegarde quotidienne dans data/backups (14 jours conservés).
 // ⚠️ Copier aussi ce dossier hors du VPS (ex. rclone, rsync) pour se protéger d'une panne disque.
-function dbBackup(keep=14){
+// name : sauvegarde ponctuelle (ex. avant un reset), jamais supprimée par la rotation
+function dbBackup(keep=14,name=null){
   if(!_db) return;
   const dir=path.join(path.dirname(DB_PATH),'backups'); fs.mkdirSync(dir,{recursive:true});
-  const file=path.join(dir,`k13-${new Date().toISOString().slice(0,10)}.db`);
+  const file=path.join(dir,name?`k13-${name}-${new Date().toISOString().replace(/[:.]/g,'-').slice(0,19)}.db`:`k13-${new Date().toISOString().slice(0,10)}.db`);
   fs.writeFileSync(file,Buffer.from(_db.export()));
+  if(name) return file;
   fs.readdirSync(dir).filter(f=>/^k13-\d{4}-\d{2}-\d{2}\.db$/.test(f)).sort().slice(0,-keep).forEach(f=>fs.unlinkSync(path.join(dir,f)));
   return file;
 }

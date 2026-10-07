@@ -125,6 +125,24 @@ async function sendPendingToAdmins(entryId) {
   }
 }
 
+// Achat boutique à traiter à la main (shout-out, game en live…) → message dans le salon admin
+async function notifyOrder(orderId) {
+  const channelId = process.env.DISCORD_ADMIN_CHANNEL_ID;
+  if (!channelId || !ready()) return;
+  const o = dbGet(`SELECT o.id, u.discord_id, u.discord_username, u.username, i.name, i.cost_points
+    FROM shop_orders o JOIN users u ON u.id=o.user_id JOIN shop_items i ON i.id=o.item_id WHERE o.id=?`, [orderId]);
+  if (!o) return;
+  try {
+    const channel = await client().channels.fetch(channelId);
+    await channel.send({ embeds: [new EmbedBuilder().setColor(COLORS.info).setTitle(`🛒 Commande boutique : ${o.name}`)
+      .addFields(
+        { name: 'Membre', value: o.discord_id ? `<@${o.discord_id}>` : (o.discord_username || o.username), inline: true },
+        { name: 'Prix', value: `${o.cost_points.toLocaleString('fr-FR')} pts`, inline: true })
+      .setDescription(`À traiter puis marquer comme traitée dans l'admin (Boutique → Commandes).${siteUrl() ? `\n${siteUrl()}/admin` : ''}`)
+      .setTimestamp()] });
+  } catch (err) { console.warn('[Notify] commande non envoyée :', err.message); }
+}
+
 // Met à jour le message du salon admin quand la demande est traitée (site ou Discord)
 async function resolvePendingMessage(msgId, approved, byLabel) {
   const channelId = process.env.DISCORD_ADMIN_CHANNEL_ID;
@@ -195,4 +213,4 @@ async function diagnose(testDiscordId) {
   return out;
 }
 
-module.exports = { ready, deletePendingMessage, postMissingPending, diagnose, siteUrl, dmUser, announceChallenge, notifyResult, sendPendingToAdmins, resolvePendingMessage };
+module.exports = { ready, notifyOrder, deletePendingMessage, postMissingPending, diagnose, siteUrl, dmUser, announceChallenge, notifyResult, sendPendingToAdmins, resolvePendingMessage };

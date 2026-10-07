@@ -8,7 +8,7 @@
  *   g:roul:<uid>:<mise>:<type>:<valeur>      rejouer à la roulette
  *   g:bj:<uid>:<mise>                        nouvelle main de blackjack
  *   g:adj:<jeu>:<uid>:<mise>:<a>:<b>         changer la mise (sans jouer)
- *   bj:<hit|stand|double>:<uid>              actions pendant une main
+ *   bj:<hit|stand|double|split>:<uid>        actions pendant une main
  */
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags } = require('discord.js');
 const { dbGet } = require('../models/db');
@@ -86,7 +86,7 @@ function coinResult(r, uid, choice) {
   const face = r.result === 'pile' ? '🟡 **PILE**' : '⚪ **FACE**';
   return { embeds: [new EmbedBuilder().setColor(r.win ? COLORS.win : COLORS.lose)
     .setTitle(r.win ? '🪙 Gagné !' : '🪙 Perdu…')
-    .setDescription(`# ${face}\nTu avais choisi ${choice === 'pile' ? '🟡 pile' : '⚪ face'}.\n\n${r.win ? `✅ **+${fmt(r.net)} pts** (×1,9)` : `❌ **-${fmt(r.bet)} pts**`}\nSolde : **${fmt(r.balance)} pts**`)
+    .setDescription(`# ${face}\nTu avais choisi ${choice === 'pile' ? '🟡 pile' : '⚪ face'}.\n\n${r.win ? `✅ **+${fmt(r.net)} pts** (×2)` : `❌ **-${fmt(r.bet)} pts**`}\nSolde : **${fmt(r.balance)} pts**`)
     .setFooter(footer(r.userId))], components: components('coin', uid, r.bet) };
 }
 
@@ -108,14 +108,18 @@ function rouletteResult(r, uid, type, value) {
 function bjMessage(r, uid, userId) {
   const outcome = r.done ? (r.outcome === 'push' ? 'push' : r.win ? 'win' : 'lose') : 'play';
   const titles = { play: '🃏 Blackjack', win: r.outcome === 'blackjack' ? '🃏 BLACKJACK !' : '🃏 Gagné !', lose: '🃏 Perdu…', push: '🃏 Égalité' };
+  const multi = r.hands.length > 1;
+  const tag = { win: ' ✅', blackjack: ' ✅', push: ' 🤝', lose: ' ❌', bust: ' 💥' };
+  const hands = r.hands.map((h, n) => `**${multi ? `Main ${n + 1}` : 'Toi'} — ${h.value}${h.doubled ? ' (doublée)' : ''}${multi && n === r.active ? ' 👈' : ''}${h.outcome ? tag[h.outcome] : ''}**\n${cardArt(h.cards)}`).join('');
   const embed = new EmbedBuilder().setColor(COLORS[outcome]).setTitle(`${titles[outcome]} — mise ${fmt(r.bet)} pts`)
-    .setDescription(`**Croupier — ${r.done ? r.dealerValue : '?'}**\n${cardArt(r.dealer)}**Toi — ${r.playerValue}**\n${cardArt(r.player)}\n${r.message}`
+    .setDescription(`**Croupier — ${r.done ? r.dealerValue : '?'}**\n${cardArt(r.dealer)}${hands}\n${r.message}`
       + (r.done ? `\nSolde : **${fmt(r.balance)} pts**${r.badge ? '\n🏅 Badge débloqué : 🃏 **Blackjack !**' : ''}` : ''))
     .setFooter(footer(userId));
-  const comps = r.done ? components('bj', uid, r.bet) : [new ActionRowBuilder().addComponents(
+  const comps = r.done ? components('bj', uid, r.baseBet || r.bet) : [new ActionRowBuilder().addComponents(
     btn(`bj:hit:${uid}`, '🃏 Tirer', ButtonStyle.Primary),
     btn(`bj:stand:${uid}`, '✋ Rester', ButtonStyle.Secondary),
-    btn(`bj:double:${uid}`, '💰 Doubler', ButtonStyle.Success, !r.canDouble))];
+    btn(`bj:double:${uid}`, '💰 Doubler', ButtonStyle.Success, !r.canDouble),
+    btn(`bj:split:${uid}`, '✂️ Séparer', ButtonStyle.Success, !r.canSplit))];
   return { embeds: [embed], components: comps };
 }
 

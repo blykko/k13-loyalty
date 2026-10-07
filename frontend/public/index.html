@@ -145,7 +145,7 @@
     <div class="games-grid">
       <!-- Pile ou face -->
       <section class="game-card">
-        <div class="game-head"><span class="game-ico">🪙</span><div><h2>Pile ou face</h2><p>Gain ×1,9</p></div></div>
+        <div class="game-head"><span class="game-ico">🪙</span><div><h2>Pile ou face</h2><p>Mise doublée si tu gagnes · 1 chance sur 2</p></div></div>
         <div class="coin" id="coin"><div class="coin-face">P</div></div>
         <div class="bet-row" data-game="coin"></div>
         <div class="choice-row">
@@ -157,7 +157,8 @@
       <!-- Roulette -->
       <section class="game-card">
         <div class="game-head"><span class="game-ico">🎡</span><div><h2>Roulette</h2><p>Européenne, un seul zéro</p></div></div>
-        <div class="wheel" id="wheel"><span id="wheel-num">0</span></div>
+        <div class="roulette-wrap"><svg id="wheel" class="rwheel" viewBox="-150 -150 300 300" role="img" aria-label="Roulette européenne"></svg><div class="rw-center" id="rw-center" aria-live="polite"></div></div>
+        <div class="rw-last" id="rw-last" title="Derniers numéros sortis"></div>
         <div class="bet-row" data-game="roulette"></div>
         <div class="choice-row wrap">
           <button class="btn-choice red" data-action="roulette" data-type="rouge">Rouge ×2</button>
@@ -175,10 +176,10 @@
       </section>
       <!-- Blackjack -->
       <section class="game-card wide">
-        <div class="game-head"><span class="game-ico">🃏</span><div><h2>Blackjack</h2><p>Croupier à 17 · Blackjack payé 3:2</p></div></div>
+        <div class="game-head"><span class="game-ico">🃏</span><div><h2>Blackjack</h2><p>Règles casino · Blackjack payé 3:2 · Doubler et séparer</p></div></div>
         <div class="bj-table">
           <div class="bj-hand"><div class="bj-label">Croupier <span id="bj-dealer-val"></span></div><div class="bj-cards" id="bj-dealer"></div></div>
-          <div class="bj-hand"><div class="bj-label">Toi <span id="bj-player-val"></span></div><div class="bj-cards" id="bj-player"></div></div>
+          <div class="bj-hands" id="bj-hands"><div class="bj-hand"><div class="bj-label">Toi</div><div class="bj-cards"></div></div></div>
         </div>
         <div class="bet-row" data-game="bj" id="bj-bet"></div>
         <div class="choice-row" id="bj-start-row"><button class="btn-primary" data-action="bj-start">Distribuer</button></div>
@@ -186,6 +187,7 @@
           <button class="btn-choice" data-action="bj" data-move="hit">Tirer</button>
           <button class="btn-choice" data-action="bj" data-move="stand">Rester</button>
           <button class="btn-choice gold" data-action="bj" data-move="double" id="bj-double">Doubler</button>
+          <button class="btn-choice gold" data-action="bj" data-move="split" id="bj-split" title="Sépare deux cartes de même valeur en deux mains (mise ajoutée)">Séparer</button>
         </div>
         <div class="game-result" id="bj-result"></div>
       </section>
