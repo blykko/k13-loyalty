@@ -13,7 +13,6 @@ const T       = require('../services/time');
 const { requireAdmin } = require('../middleware/auth');
 const { removePoints, updateRank, completeChallenge, getPeriodKey, getEntry, approvePending, rejectPending } = require('../services/challenges');
 const notify  = require('../services/notify');
-const twitterSvc = require('../services/twitter');
 const router = express.Router();
 router.use(requireAdmin);
 
@@ -22,7 +21,7 @@ const removeFile = p => { if (p) fs.unlink(path.join(PUBLIC, 'uploads', path.bas
 const int = v => { const n = parseInt(v, 10); return Number.isFinite(n) ? n : null; };
 
 // Colonnes utilisateur exposées à l'admin (jamais les tokens OAuth)
-const USER_COLS = 'u.id,u.username,u.points,u.lifetime_points,u.rank,u.discord_id,u.discord_username,u.discord_avatar,u.twitch_id,u.twitch_login,u.twitter_id,u.twitter_username,u.epic_username,u.epic_creator_code,u.notify_dm,u.created_at,u.last_seen';
+const USER_COLS = 'u.id,u.username,u.points,u.lifetime_points,u.rank,u.discord_id,u.discord_username,u.discord_avatar,u.twitch_id,u.twitch_login,u.twitter_username,u.instagram_username,u.epic_username,u.epic_creator_code,u.notify_dm,u.created_at,u.last_seen';
 
 // ── Stats ──────────────────────────────────────────────────────────────────────
 router.get('/stats', (req, res) => res.json({ ok: true,
@@ -59,7 +58,6 @@ router.get('/stats/detailed', (req, res) => {
     stripeConfigured: stripe.isStripeConfigured(),
     botConfigured: notify.ready(),
     adminChannelConfigured: !!process.env.DISCORD_ADMIN_CHANNEL_ID,
-    twitterConfigured: twitterSvc.isConfigured(),
     games: require('../services/games').houseStats(),
     dailyToday: dbGet("SELECT COUNT(*) AS c FROM points_log WHERE reason='daily' AND label LIKE 'Bonus quotidien%' AND created_at>=?", [T.toSql(T.periodStart(T.DAY))]).c,
   });
@@ -179,7 +177,7 @@ router.post('/codes/:code/use', (req, res) => {
 });
 
 // ── Challenges ─────────────────────────────────────────────────────────────────
-const CH_TYPES = ['redirect', 'screen', 'watchtime', 'messages', 'vocal', 'join', 'invite', 'follow', 'tw_like', 'tw_retweet', 'tw_reply', 'tw_follow'];
+const CH_TYPES = ['redirect', 'screen', 'watchtime', 'messages', 'vocal', 'join', 'invite', 'follow'];
 const CATEGORY_REPEAT = { daily: T.DAY, weekly: T.WEEK, monthly: T.MONTH };
 
 // Nettoie/valide les champs d'un challenge. La catégorie quotidien/hebdo/mensuel
@@ -193,11 +191,6 @@ function challengeFields(f, base = {}) {
   if (v.type && !CH_TYPES.includes(v.type)) return { error: 'Type inconnu.' };
   if (v.type === 'redirect' && !v.redirect_url) return { error: 'URL requise pour un challenge à timer.' };
   if (v.redirect_url && !/^https?:\/\//i.test(v.redirect_url)) return { error: 'URL invalide (http/https).' };
-  if (['tw_like', 'tw_retweet', 'tw_reply'].includes(v.type) && !twitterSvc.parseTweetId(v.redirect_url))
-    return { error: 'Lien de tweet requis (https://x.com/compte/status/123…).' };
-  if (v.type === 'tw_follow' && !twitterSvc.parseUsername(v.redirect_url) && !process.env.TWITTER_ACCOUNT_TO_FOLLOW)
-    return { error: 'Lien du profil X à suivre requis (https://x.com/compte).' };
-  if (v.type?.startsWith('tw_')) v.platform = 'twitter';
   return { v };
 }
 

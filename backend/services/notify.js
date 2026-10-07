@@ -61,7 +61,7 @@ function dmUser(userId, embed) {
 // tous les membres sinon ; uniquement ceux qui acceptent les MP.
 function announceChallenge(ch) {
   if (!ready()) return 0;
-  const where = { twitch: 'AND twitch_id IS NOT NULL', twitter: 'AND twitter_id IS NOT NULL' }[ch.platform] || '';
+  const where = { twitch: 'AND twitch_id IS NOT NULL' }[ch.platform] || '';
   const users = dbAll(`SELECT discord_id FROM users WHERE notify_dm=1 AND discord_id IS NOT NULL ${where}`);
   const embed = new EmbedBuilder()
     .setColor(COLORS.info)
@@ -89,7 +89,7 @@ async function sendPendingToAdmins(entryId) {
   if (!channelId) return console.warn('[Notify] DISCORD_ADMIN_CHANNEL_ID non défini : demande', entryId, 'non envoyée sur Discord');
   // Bot pas (encore) connecté : la demande sera envoyée à sa connexion (postMissingPending)
   if (!ready()) return console.warn('[Notify] Bot Discord non connecté : demande', entryId, 'envoyée plus tard');
-  const e = dbGet(`SELECT uc.*, u.discord_id, u.discord_username, u.username, u.twitter_username,
+  const e = dbGet(`SELECT uc.*, u.discord_id, u.discord_username, u.username, u.twitter_username, u.instagram_username,
       c.name AS ch_name, c.points, c.platform, c.type, c.redirect_url
     FROM user_challenges uc JOIN users u ON u.id=uc.user_id JOIN challenges c ON c.id=uc.challenge_id WHERE uc.id=?`, [entryId]);
   if (!e || e.verified !== 0) return;
@@ -104,9 +104,11 @@ async function sendPendingToAdmins(entryId) {
         { name: 'Plateforme', value: PLATFORMS[e.platform] || e.platform, inline: true },
       )
       .setTimestamp();
-    if (e.twitter_username && e.platform === 'twitter') embed.addFields({ name: 'Compte X', value: `[@${e.twitter_username}](https://x.com/${e.twitter_username})`, inline: true });
+    // @ déclaré par le membre (non vérifié) : utile pour contrôler un défi X / Instagram
+    const handle = { twitter: e.twitter_username && `[@${e.twitter_username}](https://x.com/${e.twitter_username})`,
+      instagram: e.instagram_username && `[@${e.instagram_username}](https://instagram.com/${e.instagram_username})` }[e.platform];
+    if (handle) embed.addFields({ name: 'Compte déclaré', value: handle, inline: true });
     if (e.redirect_url) embed.addFields({ name: 'Lien du défi', value: e.redirect_url });
-    if (!e.screenshot_path) embed.setDescription('Vérification automatique impossible (API X limitée) : contrôle manuellement.');
 
     const files = [];
     if (e.screenshot_path) {

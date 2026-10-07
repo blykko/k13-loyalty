@@ -100,6 +100,25 @@ router.post('/challenge/:challengeId/screenshot', upload.single('screenshot'), (
   res.status(result.ok ? 200 : 400).json(body);
 });
 
+// ── @ X et @ Instagram (saisis par le membre, sans vérification) ───────────────
+// Accepte "pseudo", "@pseudo" ou un lien de profil ; vide = supprimé
+function parseHandle(v, re) {
+  let s = String(v || '').trim();
+  const m = s.match(/(?:x|twitter|instagram)\.com\/([^/?#\s]+)/i);
+  if (m) s = m[1];
+  s = s.replace(/^@+/, '');
+  if (!s) return { value: null };
+  return re.test(s) ? { value: s } : { error: true };
+}
+router.post('/socials', (req, res) => {
+  const tw = parseHandle(req.body?.twitter, /^[A-Za-z0-9_]{1,15}$/);
+  const ig = parseHandle(req.body?.instagram, /^[A-Za-z0-9._]{1,30}$/);
+  if (tw.error) return res.status(400).json({ ok: false, message: '@ X invalide (lettres, chiffres et _ , 15 caractères max).' });
+  if (ig.error) return res.status(400).json({ ok: false, message: '@ Instagram invalide (lettres, chiffres, . et _ , 30 caractères max).' });
+  dbRun('UPDATE users SET twitter_username=?, instagram_username=? WHERE id=?', [tw.value, ig.value, req.session.userId]);
+  res.json({ ok: true, message: 'Réseaux enregistrés ✓', twitter: tw.value, instagram: ig.value });
+});
+
 // ── Epic Games ─────────────────────────────────────────────────────────────────
 router.post('/epic', (req, res) => {
   const epic_username = String(req.body?.epic_username || '').trim().slice(0, 64);

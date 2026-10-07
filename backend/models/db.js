@@ -254,6 +254,15 @@ function initDb() {
       ['Rôle VIP Discord','Rôle "VIP K13" exclusif + avantages.',                          'discord_role',15000,-1, '{}'],
     ].forEach(r => db.prepare('INSERT OR IGNORE INTO shop_items (name,description,type,cost_points,stock,extra) VALUES (?,?,?,?,?,?)').run(r));
 
+    // Réseaux sociaux saisis à la main (sans vérification) : @ X et @ Instagram.
+    // L'ancienne liaison X (API) est retirée : jetons effacés, défis X vérifiés par API → défis "lien + minuteur".
+    if (!hasCol('users', 'instagram_username')) db.run('ALTER TABLE users ADD COLUMN instagram_username TEXT');
+    if (!db.exec("SELECT 1 FROM app_settings WHERE key='social_v1'")[0]) {
+      db.run('UPDATE users SET twitter_id=NULL, twitter_token=NULL, twitter_refresh=NULL, twitter_token_exp=NULL');
+      db.run("UPDATE challenges SET type='redirect', redirect_delay=MAX(IFNULL(redirect_delay,0),20) WHERE type IN ('tw_like','tw_retweet','tw_reply','tw_follow')");
+      db.run("INSERT INTO app_settings (key,value) VALUES ('social_v1', datetime('now'))");
+    }
+
     // Nouveaux articles boutique (une seule fois ; modifiables / désactivables dans l'admin)
     if (!db.exec("SELECT 1 FROM app_settings WHERE key='shop_v2'")[0]) {
       const SHOP_V2 = [
